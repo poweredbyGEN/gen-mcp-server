@@ -275,6 +275,17 @@ On completion:
 - GET /asset_libraries?agent_id={id} → browse asset library (files + folders)
 - POST /direct_upload → get pre-signed S3 URL for large uploads
 
+### Agent Profile
+- GET /agents/{id}/profile → get full agent profile (identity, voice, brand sections)
+- POST /agents/{id}/profile → create initial agent profile (body: {identity?, voice?, brand?})
+- PUT /agents/{id}/profile → update agent profile (body: {identity?, voice?, brand?})
+- DELETE /agents/{id}/profile → reset brand/TrendPulse config (keeps agent and voice settings)
+
+Profile sections:
+- **identity:** name, description, persona
+- **voice:** eleven_lab_api_key, default_voice_id
+- **brand:** brand_name, description, goal, keywords, target_platforms, shortform, longform, linked_accounts
+
 ### API Keys (Personal Access Tokens)
 - GET /persisted_tokens → list all PATs
 - POST /persisted_tokens → create PAT (body: {name?}, token shown once)
@@ -1066,6 +1077,108 @@ server.tool(
   },
   async ({ token_id }) => {
     const data = await apiCall("DELETE", `/persisted_tokens/${token_id}/revoke`);
+    return jsonResult(data);
+  }
+);
+
+// ── Agent Profile tools ──────────────────────────────────────────────────────
+
+server.tool(
+  "gen_get_agent_profile",
+  "Get the full agent profile including identity, voice settings, and brand configuration. Returns grouped sections: identity (name, avatar, persona), voice (ElevenLabs key, default voice), and brand (keywords, platforms, linked accounts). Use this to check current agent setup before making changes.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await apiCall("GET", `/agents/${agent_id}/profile`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_create_agent_profile",
+  "Set up an agent's profile for the first time. Send any combination of identity, voice, and brand sections. Identity: name, description, persona. Voice: eleven_lab_api_key, default_voice_id. Brand: brand_name, description, goal, keywords, target_platforms, shortform, longform, linked_accounts.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    identity: z.object({
+      name: z.string().optional().describe("Agent display name"),
+      description: z.string().optional().describe("Short description of the agent"),
+      persona: z.string().optional().describe("Agent persona / personality"),
+    }).optional().describe("Identity section: name, description, persona"),
+    voice: z.object({
+      eleven_lab_api_key: z.string().optional().describe("ElevenLabs API key for voice synthesis"),
+      default_voice_id: z.string().optional().describe("Default ElevenLabs voice ID"),
+    }).optional().describe("Voice section: ElevenLabs API key and default voice"),
+    brand: z.object({
+      brand_name: z.string().optional().describe("Brand name"),
+      description: z.string().optional().describe("Brand description"),
+      goal: z.string().optional().describe("Brand goal"),
+      keywords: z.array(z.string()).optional().describe("Brand keywords"),
+      target_platforms: z.array(z.string()).optional().describe("Target social platforms"),
+      shortform: z.string().optional().describe("Short-form content strategy"),
+      longform: z.string().optional().describe("Long-form content strategy"),
+      linked_accounts: z.array(z.object({
+        platform: z.string().describe("Platform name"),
+        username: z.string().describe("Account username"),
+      })).optional().describe("Linked social accounts"),
+    }).optional().describe("Brand section: brand config, keywords, platforms, linked accounts"),
+  },
+  async ({ agent_id, identity, voice, brand }) => {
+    const body: Record<string, unknown> = {};
+    if (identity) body.identity = identity;
+    if (voice) body.voice = voice;
+    if (brand) body.brand = brand;
+    const data = await apiCall("POST", `/agents/${agent_id}/profile`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_agent_profile",
+  "Update an existing agent profile. Only send the sections and fields you want to change — everything else stays the same. For example, to just update keywords: {brand: {keywords: ['new', 'keywords']}}.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    identity: z.object({
+      name: z.string().optional().describe("Agent display name"),
+      description: z.string().optional().describe("Short description of the agent"),
+      persona: z.string().optional().describe("Agent persona / personality"),
+    }).optional().describe("Identity section: name, description, persona"),
+    voice: z.object({
+      eleven_lab_api_key: z.string().optional().describe("ElevenLabs API key for voice synthesis"),
+      default_voice_id: z.string().optional().describe("Default ElevenLabs voice ID"),
+    }).optional().describe("Voice section: ElevenLabs API key and default voice"),
+    brand: z.object({
+      brand_name: z.string().optional().describe("Brand name"),
+      description: z.string().optional().describe("Brand description"),
+      goal: z.string().optional().describe("Brand goal"),
+      keywords: z.array(z.string()).optional().describe("Brand keywords"),
+      target_platforms: z.array(z.string()).optional().describe("Target social platforms"),
+      shortform: z.string().optional().describe("Short-form content strategy"),
+      longform: z.string().optional().describe("Long-form content strategy"),
+      linked_accounts: z.array(z.object({
+        platform: z.string().describe("Platform name"),
+        username: z.string().describe("Account username"),
+      })).optional().describe("Linked social accounts"),
+    }).optional().describe("Brand section: brand config, keywords, platforms, linked accounts"),
+  },
+  async ({ agent_id, identity, voice, brand }) => {
+    const body: Record<string, unknown> = {};
+    if (identity) body.identity = identity;
+    if (voice) body.voice = voice;
+    if (brand) body.brand = brand;
+    const data = await apiCall("PUT", `/agents/${agent_id}/profile`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_reset_agent_profile",
+  "Reset the agent's brand configuration (TrendPulse config). This clears brand name, keywords, platforms, and linked accounts. Does NOT delete the agent itself or voice settings.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await apiCall("DELETE", `/agents/${agent_id}/profile`);
     return jsonResult(data);
   }
 );
