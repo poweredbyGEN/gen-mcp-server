@@ -283,7 +283,7 @@ On completion:
 
 Profile sections:
 - **identity:** name, description, persona
-- **voice:** eleven_lab_api_key, default_voice_id
+- **voice:** eleven_lab_api_key, hume_ai_api_key, default_voice: {id, name, provider}
 - **brand:** brand_name, description, goal, keywords, target_platforms, shortform, longform, linked_accounts
 
 ### API Keys (Personal Access Tokens)
@@ -1097,7 +1097,7 @@ server.tool(
 
 server.tool(
   "gen_create_agent_profile",
-  "Set up an agent's profile for the first time. Send any combination of identity, voice, and brand sections. Identity: name, description, persona. Voice: eleven_lab_api_key, default_voice_id. Brand: brand_name, description, goal, keywords, target_platforms, shortform, longform, linked_accounts.",
+  "Set up an agent's profile for the first time. Send any combination of identity, voice, and brand sections. Identity: name, description, persona. Voice: eleven_lab_api_key, hume_ai_api_key, default_voice {id, name, provider}. Brand: brand_name, description, goal, keywords, target_platforms, shortform, longform, linked_accounts.",
   {
     agent_id: z.string().describe("The agent ID"),
     identity: z.object({
@@ -1107,19 +1107,25 @@ server.tool(
     }).optional().describe("Identity section: name, description, persona"),
     voice: z.object({
       eleven_lab_api_key: z.string().optional().describe("ElevenLabs API key for voice synthesis"),
-      default_voice_id: z.string().optional().describe("Default ElevenLabs voice ID"),
-    }).optional().describe("Voice section: ElevenLabs API key and default voice"),
+      hume_ai_api_key: z.string().optional().describe("Hume AI API key for emotional voice generation"),
+      default_voice: z.object({
+        id: z.string().optional().describe("Voice ID"),
+        name: z.string().optional().describe("Voice name"),
+        provider: z.string().optional().describe("Voice provider (e.g. eleven_labs, hume_ai)"),
+      }).optional().describe("Default voice configuration"),
+    }).optional().describe("Voice section: API keys and default voice"),
     brand: z.object({
       brand_name: z.string().optional().describe("Brand name"),
       description: z.string().optional().describe("Brand description"),
       goal: z.string().optional().describe("Brand goal"),
       keywords: z.array(z.string()).optional().describe("Brand keywords"),
       target_platforms: z.array(z.string()).optional().describe("Target social platforms"),
-      shortform: z.string().optional().describe("Short-form content strategy"),
-      longform: z.string().optional().describe("Long-form content strategy"),
+      shortform: z.boolean().optional().describe("Whether short-form content is enabled"),
+      longform: z.boolean().optional().describe("Whether long-form content is enabled"),
       linked_accounts: z.array(z.object({
+        id: z.number().optional().describe("Account ID (include when updating existing accounts)"),
         platform: z.string().describe("Platform name"),
-        username: z.string().describe("Account username"),
+        url: z.string().describe("Account URL"),
       })).optional().describe("Linked social accounts"),
     }).optional().describe("Brand section: brand config, keywords, platforms, linked accounts"),
   },
@@ -1145,19 +1151,25 @@ server.tool(
     }).optional().describe("Identity section: name, description, persona"),
     voice: z.object({
       eleven_lab_api_key: z.string().optional().describe("ElevenLabs API key for voice synthesis"),
-      default_voice_id: z.string().optional().describe("Default ElevenLabs voice ID"),
-    }).optional().describe("Voice section: ElevenLabs API key and default voice"),
+      hume_ai_api_key: z.string().optional().describe("Hume AI API key for emotional voice generation"),
+      default_voice: z.object({
+        id: z.string().optional().describe("Voice ID"),
+        name: z.string().optional().describe("Voice name"),
+        provider: z.string().optional().describe("Voice provider (e.g. eleven_labs, hume_ai)"),
+      }).optional().describe("Default voice configuration"),
+    }).optional().describe("Voice section: API keys and default voice"),
     brand: z.object({
       brand_name: z.string().optional().describe("Brand name"),
       description: z.string().optional().describe("Brand description"),
       goal: z.string().optional().describe("Brand goal"),
       keywords: z.array(z.string()).optional().describe("Brand keywords"),
       target_platforms: z.array(z.string()).optional().describe("Target social platforms"),
-      shortform: z.string().optional().describe("Short-form content strategy"),
-      longform: z.string().optional().describe("Long-form content strategy"),
+      shortform: z.boolean().optional().describe("Whether short-form content is enabled"),
+      longform: z.boolean().optional().describe("Whether long-form content is enabled"),
       linked_accounts: z.array(z.object({
+        id: z.number().optional().describe("Account ID (include when updating existing accounts)"),
         platform: z.string().describe("Platform name"),
-        username: z.string().describe("Account username"),
+        url: z.string().describe("Account URL"),
       })).optional().describe("Linked social accounts"),
     }).optional().describe("Brand section: brand config, keywords, platforms, linked accounts"),
   },
