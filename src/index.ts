@@ -6,6 +6,7 @@ import { z } from "zod";
 
 const API_KEY = process.env.GEN_API_KEY;
 const BASE_URL = process.env.GEN_API_BASE_URL || "https://api.gen.pro/v1";
+const AGENT_API_BASE = process.env.GEN_AGENT_API_URL || "https://agent.gen.pro/v1";
 
 if (!API_KEY) {
   console.error("GEN_API_KEY environment variable is required");
@@ -315,6 +316,31 @@ Common error codes:
 
 async function apiCall(method: string, path: string, body?: unknown): Promise<unknown> {
   const url = `${BASE_URL}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "X-API-Key": API_KEY!,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(`API error ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+async function agentApiCall(method: string, path: string, body?: unknown): Promise<unknown> {
+  const url = `${AGENT_API_BASE}${path}`;
   const res = await fetch(url, {
     method,
     headers: {
@@ -1300,6 +1326,126 @@ server.tool(
       user_job_type: "publish_content",
       data: JSON.stringify(publishData),
     });
+    return jsonResult(data);
+  }
+);
+
+// ── Content Ideas (agent.gen.pro) ─────────────────────────────────────────
+
+server.tool(
+  "gen_generate_content_ideas",
+  "Generate data-driven video content ideas for an agent. Analyzes trending videos with engagement-weighted hooks and transcripts. Specify num_ideas (default 5), video_type filter, and per-batch requirements. Returns run_id — poll with gen_get_run_status until completed.",
+  {
+    agent_id: z.string().describe("The agent ID to generate ideas for"),
+    message: z.string().optional().describe("Natural language request, e.g. 'generate 10 montage ideas focused on before/after transformations'"),
+    num_ideas: z.number().optional().describe("Number of ideas (1-50, default 5)"),
+    requirements: z.array(z.string()).optional().describe("Per-batch constraints: ['focus on before/after', 'under 12 seconds']"),
+    video_type: z.string().optional().describe("Filter: talking_avatar | green_screen | montage | text_driven | pov_object | voiceover | split_screen | skit"),
+    conversation_id: z.string().optional().describe("Continue existing conversation to refine ideas"),
+  },
+  async ({ agent_id, message, num_ideas, requirements, video_type, conversation_id }) => {
+    let msg = message || `generate ${num_ideas || 5} content ideas`;
+    if (requirements?.length) msg += ". Requirements: " + requirements.join(". ");
+    if (video_type) msg += `. Use ${video_type} format only.`;
+    const body: Record<string, unknown> = { message: msg, agent_id };
+    if (conversation_id) body.conversation_id = conversation_id;
+    const data = await agentApiCall("POST", "/agent/run", body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_refine_content_ideas",
+  "Give feedback on previously generated content ideas to get revised versions. Must pass the conversation_id from the original generation.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    conversation_id: z.string().describe("The conversation_id from the original generation"),
+    feedback: z.string().describe("Feedback, e.g. 'make idea 1 hook shorter' or 'redo ideas 2 and 4 as montage'"),
+  },
+  async ({ agent_id, conversation_id, feedback }) => {
+    const data = await agentApiCall("POST", "/agent/run", { message: feedback, agent_id, conversation_id });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_set_content_preference",
+  "Set a persistent content generation rule for an agent. Applies to ALL future generations. Different from per-batch requirements which only apply once.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    preference: z.string().describe("Rule to save, e.g. 'always use statement hooks' or 'target women 25-34'"),
+    conversation_id: z.string().optional().describe("Optional conversation context"),
+  },
+  async ({ agent_id, preference, conversation_id }) => {
+    const body: Record<string, unknown> = { message: `Remember this content preference for all future ideas: ${preference}`, agent_id };
+    if (conversation_id) body.conversation_id = conversation_id;
+    const data = await agentApiCall("POST", "/agent/run", body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_run_status",
+  "Poll the status of an agent run. Returns 'running', 'completed', or 'failed'. When completed, messages array has the result. Poll every 5 seconds.",
+  {
+    run_id: z.string().describe("The run_id from gen_generate_content_ideas or gen_refine_content_ideas"),
+  },
+  async ({ run_id }) => {
+    const data = await agentApiCall("GET", `/agent/runs/${run_id}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_list_content_ideas",
+  "List all generated content ideas for an agent. Filter by status: generated, approve_to_create, ready_for_review, approved, published.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    status: z.string().optional().describe("Filter by status"),
+  },
+  async ({ agent_id, status }) => {
+    let path = `/agent/ideas?agent_id=${agent_id}`;
+    if (status) path += `&status=${status}`;
+    const data = await agentApiCall("GET", path);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_idea_status",
+  "Update the status of a content idea. Flow: generated → approve_to_create → ready_for_review → approved → published.",
+  {
+    idea_id: z.string().describe("The idea ID"),
+    status: z.string().describe("New status value"),
+  },
+  async ({ idea_id, status }) => {
+    const data = await agentApiCall("PUT", `/agent/ideas/${idea_id}/status/${status}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_list_conversations",
+  "List agent chat conversations with titles and metadata.",
+  {
+    agent_id: z.string().optional().describe("Filter by agent ID"),
+  },
+  async ({ agent_id }) => {
+    let path = "/agent/conversations";
+    if (agent_id) path += `?agent_id=${agent_id}`;
+    const data = await agentApiCall("GET", path);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_conversation",
+  "Get a conversation with all messages. Use to review chat history and previously generated ideas before refining.",
+  {
+    conversation_id: z.string().describe("The conversation ID"),
+  },
+  async ({ conversation_id }) => {
+    const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}`);
     return jsonResult(data);
   }
 );
