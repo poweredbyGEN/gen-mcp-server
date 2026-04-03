@@ -1,6 +1,6 @@
 {
   "name": "@poweredbygen/autocontentengine-mcp-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server for GEN Auto Content Engine API — use with Claude Code",
   "main": "dist/index.js",
   "bin": {
@@ -10,9 +10,17 @@
     "build": "tsc",
     "start": "node dist/index.js"
   },
-  "keywords": ["mcp", "gen", "autocontentengine", "claude", "ai"],
+  "keywords": [
+    "mcp",
+    "gen",
+    "autocontentengine",
+    "claude",
+    "ai"
+  ],
   "license": "MIT",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/poweredbyGEN/autocontentengine-mcp-server.git"
