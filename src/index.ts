@@ -13,7 +13,7 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const API_REFERENCE = `# GEN Auto Content Engine — System Prompt & API Reference
+const API_REFERENCE = `# GEN MCP — System Prompt & API Reference
 
 ## About GEN
 
@@ -365,6 +365,43 @@ inspiration_sources[], rationale
 - type: image | video | audio
 - clip_range: { start, end } — recommended timestamps
 - usage: exact placement in the video ("overlay at 3-6s", "background for green screen")
+
+## Agent Core (GEN-2755)
+
+The Agent Core API lets you read and write everything on the agent setup canvas
+(gen.pro/{agent_id}/setup) in a single call. It is the PREFERRED way to configure
+an agent programmatically — replaces the per-resource TrendPulse sequence.
+
+### Flat endpoints
+- GET /v1/agents/{id}/core → reads identity + overview + personality + inspiration + voice + look + accounts in one call
+- PATCH /v1/agents/{id}/core → writes any combination of those sections. Merge semantics for identity/overview/look.description, replace semantics for personality/inspiration/voice/accounts. Returns 200 on full success or 207 Multi-Status with per-section results on partial failure.
+
+### MCP tools
+- gen_get_agent_core → full read. Use this FIRST before updating to see current state.
+- gen_update_agent_core → the STAR tool. Pass any combination of identity, overview, personality, inspiration, voice, accounts in one call.
+- gen_add_agent_account → append one social URL to the agent's OWN socials.
+- gen_add_agent_inspiration → append one inspiration source URL (creators the agent draws style from, NOT its own socials).
+
+### Voice API
+- gen_connect_agent_elevenlabs → validate + save the user's ElevenLabs key on the agent
+- gen_list_agent_voices → merged library: public, user_designed, user_trained, user_elevenlabs (filterable)
+- gen_delete_voice → delete a user-owned voice
+
+### Voice design — 4-step flow (use only when the user explicitly wants to design a new voice programmatically; most users do this in the web UI)
+1. gen_generate_voice_script  → returns a read-aloud script
+2. gen_generate_voice_description → returns style descriptors (requires gender)
+3. gen_generate_voice_samples → returns 3 candidate audio samples, each with an opaque generation_id
+4. gen_design_voice → finalize by passing one of the generation_ids + a name
+
+### Voice cloning
+- gen_clone_voice → create a voice from an existing audio sample. Pass EITHER audio_url (preferred, server downloads) OR audio_base64 (inline bytes for small clips). Synchronous — returns the voice immediately. Shows up as source=user_trained.
+
+### Voice preview
+- gen_preview_voice → ASYNC. Returns {user_job_id} immediately.
+- gen_get_voice_preview_status → poll until status=='completed', then read output_resources for the audio URL.
+
+### When to use Agent Core vs individual TrendPulse tools
+Use Agent Core whenever you are setting up a new agent or making any change to its setup canvas. The only time you should use the individual /v1/agents/{id}/trendpulse/* tools is when you need to trigger a feature the Agent Core API doesn't expose (e.g., manual brand analysis kickoff, subscription management, trend source monitoring toggles).
 `;
 
 async function apiCall(method: string, path: string, body?: unknown): Promise<unknown> {
@@ -424,8 +461,8 @@ function jsonResult(data: unknown) {
 }
 
 const server = new McpServer({
-  name: "autocontentengine",
-  version: "0.3.0",
+  name: "gen",
+  version: "0.5.0",
 });
 
 // ── API Reference resource ──────────────────────────────────────────────────
@@ -1652,6 +1689,259 @@ server.tool(
   },
   async ({ conversation_id }) => {
     const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}`);
+    return jsonResult(data);
+  }
+);
+
+// ── Agent Core (GEN-2755) ────────────────────────────────────────────────────
+// Flat endpoints for the agent setup canvas. All calls PAT-authenticated.
+
+server.tool(
+  "gen_get_agent_core",
+  "Get all agent setup sections in one call: identity (name + profile photo), overview (brand name, description, identity type, goal, keywords, target platforms), personality, inspiration sources, voice, look (description + reference images), accounts (the agent's own socials). Use before updating to see current state.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await apiCall("GET", `/agents/${agent_id}/core`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_agent_core",
+  "Update any combination of agent setup sections in one call. Merge semantics for identity + overview + look.description; replace semantics for personality + inspiration + voice + accounts. Returns 200 on full success, 207 with per-section results on partial failure. PREFERRED over calling individual TrendPulse endpoints.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    identity: z.object({
+      name: z.string().optional(),
+      profile_photo_url: z.string().optional(),
+    }).optional().describe("Identity merge-patch"),
+    overview: z.object({
+      brand_name: z.string().optional(),
+      description: z.string().optional(),
+      identity_type: z.enum(["brand", "character"]).optional(),
+      goal: z.string().optional().describe("e.g. 'growth', 'authority', 'sales'"),
+      keywords: z.array(z.string()).optional(),
+      target_platforms: z.array(z.string()).optional(),
+      shortform: z.boolean().optional(),
+      longform: z.boolean().optional(),
+      onboarding_status: z.string().optional(),
+    }).optional().describe("Brand profile merge-patch"),
+    personality: z.string().optional().describe("Full personality / backstory text — replaces existing"),
+    inspiration: z.array(z.object({
+      url: z.string(),
+      platform: z.string().optional(),
+    })).optional().describe("Inspiration source URLs — replaces full list"),
+    look: z.object({
+      description: z.string().optional(),
+    }).optional().describe("Look description merge-patch (reference_images managed via item-level tools)"),
+    voice: z.object({
+      voice_id: z.string(),
+      source: z.enum(["public", "user_designed", "user_trained", "user_elevenlabs"]).optional(),
+    }).optional().describe("Voice reference — replaces default"),
+    accounts: z.array(z.object({
+      url: z.string(),
+      platform: z.string().optional(),
+      display_name: z.string().optional(),
+    })).optional().describe("Agent's own socials — replaces full list"),
+  },
+  async ({ agent_id, ...patch }) => {
+    const body: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) body[key] = value;
+    }
+    const data = await apiCall("PATCH", `/agents/${agent_id}/core`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_add_agent_account",
+  "Add one social account to the agent (the agent's OWN account, not an inspiration source). Detects platform from URL if not provided.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    url: z.string().describe("Full social URL (e.g. https://tiktok.com/@santiago_real)"),
+    platform: z.string().optional().describe("Override platform detection (e.g. 'tiktok', 'instagram')"),
+    display_name: z.string().optional(),
+  },
+  async ({ agent_id, url, platform, display_name }) => {
+    const body: Record<string, unknown> = { url };
+    if (platform) body.platform = platform;
+    if (display_name) body.display_name = display_name;
+    const data = await apiCall("POST", `/agents/${agent_id}/core/accounts`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_add_agent_inspiration",
+  "Add one inspiration source URL to the agent. These are creators/accounts the agent draws style from — NOT the agent's own socials.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    url: z.string().describe("Full URL of the inspiration source"),
+    platform: z.string().optional().describe("e.g. 'tiktok', 'instagram', 'youtube'"),
+  },
+  async ({ agent_id, url, platform }) => {
+    const body: Record<string, unknown> = { url };
+    if (platform) body.platform = platform;
+    const data = await apiCall("POST", `/agents/${agent_id}/core/inspiration`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_connect_agent_elevenlabs",
+  "Connect the user's ElevenLabs API key to the agent. Validates the key against ElevenLabs /v1/user before saving. Once connected, gen_list_agent_voices includes the user's ElevenLabs voices.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    api_key: z.string().describe("The user's ElevenLabs API key (xi-api-key)"),
+  },
+  async ({ agent_id, api_key }) => {
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/integrations/elevenlabs`, { api_key });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_list_agent_voices",
+  "List available voices for the agent. Sources: public (shared catalog), user_designed (via prompt flow), user_trained (from audio), user_elevenlabs (from connected key). Filter with `source` to narrow.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    source: z.enum(["public", "user_designed", "user_trained", "user_elevenlabs"]).optional().describe("Filter by source"),
+  },
+  async ({ agent_id, source }) => {
+    const suffix = source ? `?source=${source}` : "";
+    const data = await apiCall("GET", `/agents/${agent_id}/voice/library${suffix}`);
+    return jsonResult(data);
+  }
+);
+
+// Voice design flow — 4 steps, all against /v1/agents/{id}/voice/design/*
+server.tool(
+  "gen_generate_voice_script",
+  "Voice design step 1/4: generate a read-aloud script for the voice (the text the candidate voice will speak in step 3).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    language: z.string().optional().describe("Target language (e.g. 'en', 'es')"),
+  },
+  async ({ agent_id, language }) => {
+    const body: Record<string, unknown> = {};
+    if (language) body.language = language;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-script`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_generate_voice_description",
+  "Voice design step 2/4: generate style descriptors for the voice (tone, pace, energy). Requires gender.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    gender: z.string().describe("REQUIRED — e.g. 'male', 'female', 'non-binary'"),
+    voice_description: z.string().optional().describe("Optional user hint like 'warm and confident'"),
+    language: z.string().optional(),
+    script: z.string().optional().describe("The script from step 1 (helps tune the description)"),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-description`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_generate_voice_samples",
+  "Voice design step 3/4: generate 3 candidate audio samples. Returns `{samples: [{generation_id, audio}, ...]}` — pick one and pass its `generation_id` to gen_design_voice to finalize.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    text: z.string().describe("REQUIRED — the script to speak (from step 1)"),
+    description: z.string().optional().describe("Style descriptor from step 2"),
+  },
+  async ({ agent_id, text, description }) => {
+    const body: Record<string, unknown> = { text };
+    if (description) body.description = description;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-samples`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_design_voice",
+  "Voice design step 4/4: finalize a designed voice by picking one of the candidates from step 3. Persists the new voice and it shows up in gen_list_agent_voices under source=user_designed.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    generation_id: z.string().describe("REQUIRED — opaque token from gen_generate_voice_samples"),
+    name: z.string().describe("REQUIRED — display name for the new voice"),
+    gender: z.string().optional(),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_clone_voice",
+  "Voice cloning — create a new voice from an existing audio sample. Pass EITHER audio_url (preferred; server downloads it) OR audio_base64 (inline bytes for small clips). Synchronous — returns the created voice immediately. Shows up under source=user_trained.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().describe("REQUIRED — display name for the cloned voice"),
+    audio_url: z.string().optional().describe("URL to an audio sample (mp3/wav). PREFERRED."),
+    audio_base64: z.string().optional().describe("Base64-encoded audio bytes. Only for small clips."),
+    gender: z.string().optional(),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/clone`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_voice_preview_status",
+  "Poll the status of a TTS preview job returned by gen_preview_voice. Returns the full user_job record — check `.status` (pending/processing/completed/failed) and, when completed, read the output audio from `.output_resources`.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The user_job_id returned by gen_preview_voice"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await apiCall("GET", `/agents/${agent_id}/voice/preview/${job_id}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_preview_voice",
+  "Generate a TTS preview of a voice saying a given text. Use to audition a voice before assigning it via gen_update_agent_core voice section.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    voice_id: z.string().describe("The voice ID to preview"),
+    text: z.string().describe("The text to speak (keep under 500 chars for fast preview)"),
+  },
+  async ({ agent_id, voice_id, text }) => {
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/${voice_id}/preview`, { text });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_delete_voice",
+  "Delete a user-owned voice (designed or trained). Returns 404 if the voice doesn't belong to the agent.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    voice_id: z.string().describe("The voice ID to delete"),
+  },
+  async ({ agent_id, voice_id }) => {
+    const data = await apiCall("DELETE", `/agents/${agent_id}/voice/${voice_id}`);
     return jsonResult(data);
   }
 );
