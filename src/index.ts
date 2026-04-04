@@ -424,8 +424,8 @@ function jsonResult(data: unknown) {
 }
 
 const server = new McpServer({
-  name: "autocontentengine",
-  version: "0.3.0",
+  name: "gen",
+  version: "0.5.0",
 });
 
 // ── API Reference resource ──────────────────────────────────────────────────
@@ -1652,6 +1652,184 @@ server.tool(
   },
   async ({ conversation_id }) => {
     const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}`);
+    return jsonResult(data);
+  }
+);
+
+// ── Agent Core (GEN-2755) ────────────────────────────────────────────────────
+// Flat endpoints for the agent setup canvas. All calls PAT-authenticated.
+
+server.tool(
+  "gen_get_agent_core",
+  "Get all agent setup sections in one call: identity (name + profile photo), overview (brand name, description, identity type, goal, keywords, target platforms), personality, inspiration sources, voice, look (description + reference images), accounts (the agent's own socials). Use before updating to see current state.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await apiCall("GET", `/agents/${agent_id}/core`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_agent_core",
+  "Update any combination of agent setup sections in one call. Merge semantics for identity + overview + look.description; replace semantics for personality + inspiration + voice + accounts. Returns 200 on full success, 207 with per-section results on partial failure. PREFERRED over calling individual TrendPulse endpoints.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    identity: z.object({
+      name: z.string().optional(),
+      profile_photo_url: z.string().optional(),
+    }).optional().describe("Identity merge-patch"),
+    overview: z.object({
+      brand_name: z.string().optional(),
+      description: z.string().optional(),
+      identity_type: z.enum(["brand", "character"]).optional(),
+      goal: z.string().optional().describe("e.g. 'growth', 'authority', 'sales'"),
+      keywords: z.array(z.string()).optional(),
+      target_platforms: z.array(z.string()).optional(),
+      shortform: z.boolean().optional(),
+      longform: z.boolean().optional(),
+      onboarding_status: z.string().optional(),
+    }).optional().describe("Brand profile merge-patch"),
+    personality: z.string().optional().describe("Full personality / backstory text — replaces existing"),
+    inspiration: z.array(z.object({
+      url: z.string(),
+      platform: z.string().optional(),
+    })).optional().describe("Inspiration source URLs — replaces full list"),
+    look: z.object({
+      description: z.string().optional(),
+    }).optional().describe("Look description merge-patch (reference_images managed via item-level tools)"),
+    voice: z.object({
+      voice_id: z.string(),
+      source: z.enum(["public", "user_designed", "user_trained", "user_elevenlabs"]).optional(),
+    }).optional().describe("Voice reference — replaces default"),
+    accounts: z.array(z.object({
+      url: z.string(),
+      platform: z.string().optional(),
+      display_name: z.string().optional(),
+    })).optional().describe("Agent's own socials — replaces full list"),
+  },
+  async ({ agent_id, ...patch }) => {
+    const body: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) body[key] = value;
+    }
+    const data = await apiCall("PATCH", `/agents/${agent_id}/core`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_add_agent_account",
+  "Add one social account to the agent (the agent's OWN account, not an inspiration source). Detects platform from URL if not provided.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    url: z.string().describe("Full social URL (e.g. https://tiktok.com/@santiago_real)"),
+    platform: z.string().optional().describe("Override platform detection (e.g. 'tiktok', 'instagram')"),
+    display_name: z.string().optional(),
+  },
+  async ({ agent_id, url, platform, display_name }) => {
+    const body: Record<string, unknown> = { url };
+    if (platform) body.platform = platform;
+    if (display_name) body.display_name = display_name;
+    const data = await apiCall("POST", `/agents/${agent_id}/core/accounts`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_add_agent_inspiration",
+  "Add one inspiration source URL to the agent. These are creators/accounts the agent draws style from — NOT the agent's own socials.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    url: z.string().describe("Full URL of the inspiration source"),
+    platform: z.string().optional().describe("e.g. 'tiktok', 'instagram', 'youtube'"),
+  },
+  async ({ agent_id, url, platform }) => {
+    const body: Record<string, unknown> = { url };
+    if (platform) body.platform = platform;
+    const data = await apiCall("POST", `/agents/${agent_id}/core/inspiration`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_connect_agent_elevenlabs",
+  "Connect the user's ElevenLabs API key to the agent. Validates the key against ElevenLabs /v1/user before saving. Once connected, gen_list_agent_voices includes the user's ElevenLabs voices.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    api_key: z.string().describe("The user's ElevenLabs API key (xi-api-key)"),
+  },
+  async ({ agent_id, api_key }) => {
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/integrations/elevenlabs`, { api_key });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_list_agent_voices",
+  "List available voices for the agent. Sources: public (shared catalog), user_designed (via prompt flow), user_trained (from audio), user_elevenlabs (from connected key). Filter with `source` to narrow.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    source: z.enum(["public", "user_designed", "user_trained", "user_elevenlabs"]).optional().describe("Filter by source"),
+  },
+  async ({ agent_id, source }) => {
+    const suffix = source ? `?source=${source}` : "";
+    const data = await apiCall("GET", `/agents/${agent_id}/voice/library${suffix}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_design_voice",
+  "Finalize a new designed voice for the agent (step 4 of the design flow — assumes the caller has already generated a sample via the GEN web UI). For programmatic design, use the GEN API directly since the flow is multi-step.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().describe("Name to save the voice under"),
+    sample_id: z.string().describe("The ID of the generated sample to persist"),
+  },
+  async ({ agent_id, name, sample_id }) => {
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design`, { name, sample_id });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_voice_training_status",
+  "Check the status of a voice training job started via the GEN UI (audio sample upload).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The training job ID returned by POST /voice/train"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await apiCall("GET", `/agents/${agent_id}/voice/train/${job_id}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_preview_voice",
+  "Generate a TTS preview of a voice saying a given text. Use to audition a voice before assigning it via gen_update_agent_core voice section.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    voice_id: z.string().describe("The voice ID to preview"),
+    text: z.string().describe("The text to speak (keep under 500 chars for fast preview)"),
+  },
+  async ({ agent_id, voice_id, text }) => {
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/${voice_id}/preview`, { text });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_delete_voice",
+  "Delete a user-owned voice (designed or trained). Returns 404 if the voice doesn't belong to the agent.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    voice_id: z.string().describe("The voice ID to delete"),
+  },
+  async ({ agent_id, voice_id }) => {
+    const data = await apiCall("DELETE", `/agents/${agent_id}/voice/${voice_id}`);
     return jsonResult(data);
   }
 );
