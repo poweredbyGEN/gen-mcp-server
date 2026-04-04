@@ -13,7 +13,7 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const API_REFERENCE = `# GEN Auto Content Engine — System Prompt & API Reference
+const API_REFERENCE = `# GEN MCP — System Prompt & API Reference
 
 ## About GEN
 
@@ -365,6 +365,43 @@ inspiration_sources[], rationale
 - type: image | video | audio
 - clip_range: { start, end } — recommended timestamps
 - usage: exact placement in the video ("overlay at 3-6s", "background for green screen")
+
+## Agent Core (GEN-2755)
+
+The Agent Core API lets you read and write everything on the agent setup canvas
+(gen.pro/{agent_id}/setup) in a single call. It is the PREFERRED way to configure
+an agent programmatically — replaces the per-resource TrendPulse sequence.
+
+### Flat endpoints
+- GET /v1/agents/{id}/core → reads identity + overview + personality + inspiration + voice + look + accounts in one call
+- PATCH /v1/agents/{id}/core → writes any combination of those sections. Merge semantics for identity/overview/look.description, replace semantics for personality/inspiration/voice/accounts. Returns 200 on full success or 207 Multi-Status with per-section results on partial failure.
+
+### MCP tools
+- gen_get_agent_core → full read. Use this FIRST before updating to see current state.
+- gen_update_agent_core → the STAR tool. Pass any combination of identity, overview, personality, inspiration, voice, accounts in one call.
+- gen_add_agent_account → append one social URL to the agent's OWN socials.
+- gen_add_agent_inspiration → append one inspiration source URL (creators the agent draws style from, NOT its own socials).
+
+### Voice API
+- gen_connect_agent_elevenlabs → validate + save the user's ElevenLabs key on the agent
+- gen_list_agent_voices → merged library: public, user_designed, user_trained, user_elevenlabs (filterable)
+- gen_delete_voice → delete a user-owned voice
+
+### Voice design — 4-step flow (use only when the user explicitly wants to design a new voice programmatically; most users do this in the web UI)
+1. gen_generate_voice_script  → returns a read-aloud script
+2. gen_generate_voice_description → returns style descriptors (requires gender)
+3. gen_generate_voice_samples → returns 3 candidate audio samples, each with an opaque generation_id
+4. gen_design_voice → finalize by passing one of the generation_ids + a name
+
+### Voice cloning
+- gen_clone_voice → create a voice from an existing audio sample. Pass EITHER audio_url (preferred, server downloads) OR audio_base64 (inline bytes for small clips). Synchronous — returns the voice immediately. Shows up as source=user_trained.
+
+### Voice preview
+- gen_preview_voice → ASYNC. Returns {user_job_id} immediately.
+- gen_get_voice_preview_status → poll until status=='completed', then read output_resources for the audio URL.
+
+### When to use Agent Core vs individual TrendPulse tools
+Use Agent Core whenever you are setting up a new agent or making any change to its setup canvas. The only time you should use the individual /v1/agents/{id}/trendpulse/* tools is when you need to trigger a feature the Agent Core API doesn't expose (e.g., manual brand analysis kickoff, subscription management, trend source monitoring toggles).
 `;
 
 async function apiCall(method: string, path: string, body?: unknown): Promise<unknown> {
@@ -1780,29 +1817,104 @@ server.tool(
   }
 );
 
+// Voice design flow — 4 steps, all against /v1/agents/{id}/voice/design/*
 server.tool(
-  "gen_design_voice",
-  "Finalize a new designed voice for the agent (step 4 of the design flow — assumes the caller has already generated a sample via the GEN web UI). For programmatic design, use the GEN API directly since the flow is multi-step.",
+  "gen_generate_voice_script",
+  "Voice design step 1/4: generate a read-aloud script for the voice (the text the candidate voice will speak in step 3).",
   {
     agent_id: z.string().describe("The agent ID"),
-    name: z.string().describe("Name to save the voice under"),
-    sample_id: z.string().describe("The ID of the generated sample to persist"),
+    language: z.string().optional().describe("Target language (e.g. 'en', 'es')"),
   },
-  async ({ agent_id, name, sample_id }) => {
-    const data = await apiCall("POST", `/agents/${agent_id}/voice/design`, { name, sample_id });
+  async ({ agent_id, language }) => {
+    const body: Record<string, unknown> = {};
+    if (language) body.language = language;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-script`, body);
     return jsonResult(data);
   }
 );
 
 server.tool(
-  "gen_get_voice_training_status",
-  "Check the status of a voice training job started via the GEN UI (audio sample upload).",
+  "gen_generate_voice_description",
+  "Voice design step 2/4: generate style descriptors for the voice (tone, pace, energy). Requires gender.",
   {
     agent_id: z.string().describe("The agent ID"),
-    job_id: z.string().describe("The training job ID returned by POST /voice/train"),
+    gender: z.string().describe("REQUIRED — e.g. 'male', 'female', 'non-binary'"),
+    voice_description: z.string().optional().describe("Optional user hint like 'warm and confident'"),
+    language: z.string().optional(),
+    script: z.string().optional().describe("The script from step 1 (helps tune the description)"),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-description`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_generate_voice_samples",
+  "Voice design step 3/4: generate 3 candidate audio samples. Returns `{samples: [{generation_id, audio}, ...]}` — pick one and pass its `generation_id` to gen_design_voice to finalize.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    text: z.string().describe("REQUIRED — the script to speak (from step 1)"),
+    description: z.string().optional().describe("Style descriptor from step 2"),
+  },
+  async ({ agent_id, text, description }) => {
+    const body: Record<string, unknown> = { text };
+    if (description) body.description = description;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design/generate-samples`, body);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_design_voice",
+  "Voice design step 4/4: finalize a designed voice by picking one of the candidates from step 3. Persists the new voice and it shows up in gen_list_agent_voices under source=user_designed.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    generation_id: z.string().describe("REQUIRED — opaque token from gen_generate_voice_samples"),
+    name: z.string().describe("REQUIRED — display name for the new voice"),
+    gender: z.string().optional(),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/design`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_clone_voice",
+  "Voice cloning — create a new voice from an existing audio sample. Pass EITHER audio_url (preferred; server downloads it) OR audio_base64 (inline bytes for small clips). Synchronous — returns the created voice immediately. Shows up under source=user_trained.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().describe("REQUIRED — display name for the cloned voice"),
+    audio_url: z.string().optional().describe("URL to an audio sample (mp3/wav). PREFERRED."),
+    audio_base64: z.string().optional().describe("Base64-encoded audio bytes. Only for small clips."),
+    gender: z.string().optional(),
+    language: z.string().optional(),
+    description: z.string().optional(),
+  },
+  async ({ agent_id, ...body }) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) if (v !== undefined) clean[k] = v;
+    const data = await apiCall("POST", `/agents/${agent_id}/voice/clone`, clean);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_voice_preview_status",
+  "Poll the status of a TTS preview job returned by gen_preview_voice. Returns the full user_job record — check `.status` (pending/processing/completed/failed) and, when completed, read the output audio from `.output_resources`.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The user_job_id returned by gen_preview_voice"),
   },
   async ({ agent_id, job_id }) => {
-    const data = await apiCall("GET", `/agents/${agent_id}/voice/train/${job_id}`);
+    const data = await apiCall("GET", `/agents/${agent_id}/voice/preview/${job_id}`);
     return jsonResult(data);
   }
 );
