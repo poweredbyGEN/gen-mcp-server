@@ -373,7 +373,7 @@ The Agent Core API lets you read and write everything on the agent setup canvas
 an agent programmatically — replaces the per-resource TrendPulse sequence.
 
 ### Flat endpoints
-- GET /v1/agents/{id}/core → reads every field as a flat object (brand_name, description, identity_type, goal, target_platforms, shortform, longform, keywords, monitored, linked_accounts, personality, default_user_voice)
+- GET /v1/agents/{id}/core → reads every field as a flat object (brand_name, description, identity_type, goal, target_platforms, shortform, longform, keywords, monitored, linked_accounts, research_topics, look, personality, default_user_voice)
 - PATCH /v1/agents/{id}/core → writes any subset. Field names mirror the GEN Setup canvas 1:1 — no wrappers, no sections. Returns 200 on full success or 207 with per-target status (trendpulse | personality | voice) on partial failure.
 
 ### Critical distinctions
@@ -1702,7 +1702,7 @@ server.tool(
 
 server.tool(
   "gen_get_agent_core",
-  "Get the agent's full setup as a flat object: brand_name, description, identity_type, goal, target_platforms, shortform, longform, onboarding_status, keywords, monitored (inspiration sources: accounts/hashtags/keywords to watch), linked_accounts (the agent's OWN brand socials), personality (full persona text), default_user_voice. Field names mirror the GEN Setup canvas exactly. Use BEFORE updating to see current state — list fields like linked_accounts and monitored use full-list replacement on PATCH, so you need to read them first if you're appending.",
+  "Get the agent's full setup as a flat object: brand_name, description, identity_type, goal, target_platforms, shortform, longform, onboarding_status, keywords, monitored (inspiration sources: accounts/hashtags/keywords to watch), linked_accounts (the agent's OWN brand socials), research_topics (subjects the agent needs daily awareness of), look (visual style descriptor for image generation), personality (full persona text), default_user_voice. Field names mirror the GEN Setup canvas exactly. Use BEFORE updating to see current state — list fields like linked_accounts and monitored use full-list replacement on PATCH, so you need to read them first if you're appending.",
   {
     agent_id: z.string().describe("The agent ID"),
   },
@@ -1736,6 +1736,8 @@ server.tool(
       platform: z.string().optional().describe("tiktok | instagram | youtube | x | linkedin | pinterest | facebook | threads | website"),
       display_name: z.string().optional(),
     })).optional().describe("The agent's OWN brand social links. Replaces the full list with delete-then-insert diffing."),
+    research_topics: z.array(z.string()).optional().describe("Subjects the agent needs daily awareness of (e.g. trending topics to monitor). Empty array = evergreen content, no research needed."),
+    look: z.string().max(2000).optional().describe("Visual style descriptor used for image generation prompts. E.g. 'minimalist product shots on white background, warm tones'."),
     personality: z.string().max(20000).optional().describe("Full persona / backstory text. Max 20000 chars. Writes to Rails project_nodes (node_type='personality')."),
     default_user_voice: z.object({
       voice_id: z.string(),
