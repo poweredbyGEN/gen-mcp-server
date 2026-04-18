@@ -89,10 +89,9 @@ research, conversations, and monitoring jobs.
 
 ### Step 3 — Convert Idea to Vidsheet
 
-Template clone, idea-to-vidsheet bridge, or build from scratch.
+Clone a template or build from scratch. After cloning, PATCH cells to inject the idea's script / hook / variables.
 
 - `gen_list_templates`, `gen_get_template`, **`gen_clone_template`**
-- **`gen_create_vidsheet_from_idea`** — single-call idea → vidsheet bridge
 - `gen_create_engine`, `gen_get_engine`, `gen_clone_engine`
 
 ### Step 4 — Edit & Generate
@@ -133,10 +132,9 @@ GEN_API_KEY=your-key npm start
 ## Changelog
 
 ### 0.5.0
-- Restructured all 82 tools around the 5-step user journey (GEN-2879)
+- Restructured all 81 tools around the 5-step user journey (GEN-2879)
 - Rewrote the embedded `gen://api-reference` resource as a step-by-step teaching document with chained curl examples
 - Tool descriptions now start with the phase (e.g. "Step 1 (Agent Setup): …") so AI tooling can route quickly
-- Added `gen_create_vidsheet_from_idea` — single-call bridge from an approved idea to a ready-to-edit vidsheet
 
 ### 0.4.x
 - Added Agent Core flat endpoints (GEN-2755)

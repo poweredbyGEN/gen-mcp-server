@@ -231,12 +231,9 @@ Two paths:
 - **Template path** (fastest): clone a pre-configured template into the agent.
   Templates come with columns and example rows wired up for common formats
   like "Talking Avatar", "Montage", "Split Screen". Use this 80% of the time.
-- **From-idea path** (one call): \`gen_create_vidsheet_from_idea\` takes an
-  approved \`idea_id\` and creates a vidsheet with the right columns and a first
-  row pre-filled from the idea's script and selected assets. This is the
-  single-call bridge between Step 2 and Step 4.
+  After cloning, PATCH cells to inject the idea's script, hook, and variables.
 - **From-scratch path**: create an empty engine and build columns manually.
-  Only reach for this if neither template nor idea bridge fits.
+  Only reach for this if no template fits.
 
 **Top tools for this step:**
 
@@ -245,21 +242,13 @@ Two paths:
 | \`gen_list_templates\` | Browse pre-built vidsheet templates. Check here FIRST. |
 | \`gen_get_template\` | Inspect a template's columns and structure before cloning. |
 | \`gen_clone_template\` | Clone a template into the agent. Returns a ready-to-edit vidsheet. The **fastest** path to production. |
-| \`gen_create_vidsheet_from_idea\` | **The idea → vidsheet bridge.** Pass \`idea_id\` + \`agent_id\`. Creates a vidsheet pre-configured from the approved idea (script, selected assets, video_type-appropriate columns). |
-| \`gen_create_engine\` | Create an empty engine. Use only if templates and the idea bridge don't fit. |
+| \`gen_create_engine\` | Create an empty engine. Use only if no template fits. |
 | \`gen_get_engine\` | Fetch an engine with all columns, rows, cells in one call — do this before editing. |
 | \`gen_clone_engine\` | Duplicate an existing engine (same agent or cross-agent). |
 
-**Example — from approved idea to ready vidsheet:**
+**Example — template clone path:**
 
 \`\`\`bash
-# Option A: single-call bridge (preferred)
-curl -X POST https://api.gen.pro/v1/vidsheet/from_idea \\
-  -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
-  -d '{"agent_id":"<agent_id>","idea_id":"<idea_id>"}'
-# → {"engine_id":"<engine_id>", "columns":[...], "rows":[{"id":"<row_id>", ...}]}
-
-# Option B: template path
 curl https://api.gen.pro/v1/templates/projects \\
   -H "X-API-Key: \$GEN_API_KEY"
 # → pick a slug like "tiktok-montage-v2"
@@ -507,12 +496,10 @@ Common codes:
    valid \`agent_id\` before anything else.
 2. **Check templates before building from scratch** in Step 3 — \`gen_list_templates\`
    and \`gen_clone_template\` save hours.
-3. **Prefer \`gen_create_vidsheet_from_idea\`** when you already have an approved
-   idea — one call gets you from Step 2 → Step 4 ready.
-4. **Poll patiently** — video generation runs 30–120s. Poll every 5–10s.
-5. **Use \`gen_get_engine\` liberally** — it returns all columns, rows, and cells
+3. **Poll patiently** — video generation runs 30–120s. Poll every 5–10s.
+4. **Use \`gen_get_engine\` liberally** — it returns all columns, rows, and cells
    in one call; cheap and fast.
-6. **Content resource IDs link media** — when a tool needs an existing media
+5. **Content resource IDs link media** — when a tool needs an existing media
    file, get the \`content_resource_id\` from a completed generation's
    \`output_resources\`.
 7. **Render last.** \`gen_render_video\` is the Step 5 entry point — never call
@@ -1371,7 +1358,7 @@ server.tool(
 
 server.tool(
   "gen_update_idea_status",
-  "Step 2 (Content Ideas): Update the status of a content idea. Flow: generated → approve_to_create → ready_for_review → approved → published. Approved ideas are the candidates for gen_create_vidsheet_from_idea in Step 3.",
+  "Step 2 (Content Ideas): Update the status of a content idea. Flow: generated → approve_to_create → ready_for_review → approved → published. Approved ideas are the candidates to clone into a vidsheet in Step 3.",
   {
     idea_id: z.string().describe("The idea ID"),
     status: z.string().describe("New status value"),
@@ -1513,8 +1500,7 @@ server.tool(
 //
 // Materialize an idea (or a clean template) into a vidsheet — the
 // spreadsheet-like Auto Content Engine where editing and generation happen.
-// Prefer gen_clone_template or gen_create_vidsheet_from_idea over building
-// from scratch.
+// Prefer gen_clone_template over building from scratch.
 // ═════════════════════════════════════════════════════════════════════════════
 
 server.tool(
@@ -1556,24 +1542,8 @@ server.tool(
 );
 
 server.tool(
-  "gen_create_vidsheet_from_idea",
-  "Step 3 (Idea to Vidsheet): SINGLE-CALL BRIDGE from an approved content idea to a ready-to-edit vidsheet. Takes an idea_id (from Step 2) and creates an Auto Content Engine pre-populated with the right columns for the idea's video_type, plus a first row filled in from the idea's script and selected_assets. Use this instead of gen_clone_template + manual cell updates when you already have an approved idea. Returns the new engine with engine_id, columns, and seeded rows.",
-  {
-    agent_id: z.string().describe("The agent ID that owns the idea"),
-    idea_id: z.string().describe("The approved idea_id from Step 2 (gen_list_content_ideas)"),
-    title: z.string().optional().describe("Optional title for the new vidsheet (defaults to the idea's title)"),
-  },
-  async ({ agent_id, idea_id, title }) => {
-    const body: Record<string, unknown> = { agent_id, idea_id };
-    if (title) body.title = title;
-    const data = await apiCall("POST", "/vidsheet/from_idea", body);
-    return jsonResult(data);
-  }
-);
-
-server.tool(
   "gen_create_engine",
-  "Step 3 (Idea to Vidsheet): Create a new empty Auto Content Engine (vidsheet) for an agent. Prefer gen_clone_template (fastest) or gen_create_vidsheet_from_idea (idea bridge) unless neither fits — templates come pre-configured with the right columns for common workflows.",
+  "Step 3 (Idea to Vidsheet): Create a new empty Auto Content Engine (vidsheet) for an agent. Prefer gen_clone_template (fastest) unless neither fits — templates come pre-configured with the right columns for common workflows. After cloning, PATCH cells to inject the idea's fields.",
   {
     agent_id: z.string().describe("The agent ID to create the engine for"),
     title: z.string().describe("Title for the new engine"),
