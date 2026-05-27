@@ -7,6 +7,8 @@ import { z } from "zod";
 const API_KEY = process.env.GEN_API_KEY;
 const BASE_URL = process.env.GEN_API_BASE_URL || "https://api.gen.pro/v1";
 const AGENT_API_BASE = process.env.GEN_AGENT_API_URL || "https://agent.gen.pro/v1";
+const AGENT_CORE_API_BASE =
+  process.env.GEN_AGENT_CORE_API_URL || "https://agent-core.gen.pro/v1";
 
 if (!API_KEY) {
   console.error("GEN_API_KEY environment variable is required");
@@ -475,6 +477,53 @@ All canonical names below are accepted; the server maps to internal names.
 | \`global_variable_name\` | Variable name column | No (system) |
 | \`global_variable_value\` | Variable value column | No (system) |
 
+# Step 3 (Monitoring & Automation)
+
+Two long-lived primitives let an agent watch the world and act on a schedule.
+Both are CRUD-only here — they're free to manage; downstream scrapes and
+scheduled runs bill normally.
+
+## Watchlists (\`agent-core.gen.pro\`)
+
+A **Watchlist** is a named collection of \`(platform, target_type, target_value)\`
+sources you want continuously monitored. \`target_type ∈ {account, hashtag, keyword}\`.
+
+Typical flow:
+
+1. \`gen_create_watchlist\` with name + initial sources[]. Creation is
+   idempotent on name (case-insensitive): re-using the same name merges new
+   sources into the existing watchlist.
+2. \`gen_add_watchlist_source\` / \`gen_remove_watchlist_source\` to evolve it.
+3. \`gen_pause_watchlist\` / \`gen_resume_watchlist\` to toggle monitoring intent
+   without losing the configuration. \`gen_delete_watchlist\` is the permanent
+   form.
+
+Scraped results from watchlist sources feed back into agent chat and content
+idea generation; query them through the chat interface, not directly here.
+
+## Recurring Jobs / Daily Tasks (\`agent.gen.pro\`)
+
+A **Recurring Job** runs a prompt on a schedule.
+
+\`\`\`
+schedule.cadence ∈ {daily, weekly, hourly}
+schedule.timezone   = IANA tz (e.g. "America/Los_Angeles")
+schedule.time_of_day = "HH:MM" 24h (required for daily/weekly)
+delivery.type ∈ {chat_only, email}
+status ∈ {active, paused, deleted}
+\`\`\`
+
+Typical flow:
+
+1. \`gen_ensure_default_recurring_job\` for the standard daily "Generate
+   content ideas" task — idempotent, safe to call repeatedly.
+2. \`gen_create_recurring_job\` for any other prompt/cadence/delivery combo.
+3. \`gen_pause_recurring_job\` / \`gen_resume_recurring_job\` for temporary stops;
+   \`gen_delete_recurring_job\` to remove.
+
+Each scheduled run is gated by available credits: a job remains configured
+when credits run out and resumes when credits return.
+
 # Error Format
 
 All errors return:
@@ -538,6 +587,35 @@ async function apiCall(method: string, path: string, body?: unknown): Promise<un
 
 async function agentApiCall(method: string, path: string, body?: unknown): Promise<unknown> {
   const url = `${AGENT_API_BASE}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "X-API-Key": API_KEY!,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(`API error ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+async function agentCoreApiCall(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const url = `${AGENT_CORE_API_BASE}${path}`;
   const res = await fetch(url, {
     method,
     headers: {
@@ -2118,6 +2196,400 @@ server.tool(
     });
     return jsonResult(data);
   }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3 (Monitoring): Watchlists — agent-core
+//
+// A Watchlist is a named collection of social-media monitoring targets for an
+// agent. Each target ("source") is (platform, target_type, target_value).
+// target_type ∈ {account, hashtag, keyword}. Scraped data feeds back into
+// agent chat and content-idea generation.
+//
+// All endpoints live on agent-core.gen.pro (separate base from Rails and
+// gen-agentic). Auth: PAT (X-API-Key).
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "gen_list_watchlists",
+  "Step 3 (Monitoring): List all active watchlists for an agent. Each watchlist contains a name and a list of sources (account/hashtag/keyword) being monitored across platforms. Returns soft-deleted watchlists filtered out.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the watchlists"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentCoreApiCall(
+      "GET",
+      `/agents/${agent_id}/watchlists`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_create_watchlist",
+  "Step 3 (Monitoring): Create a new watchlist for an agent, optionally with initial sources. Idempotent on watchlist name (case-insensitive): if a watchlist with the same name already exists, the provided sources are merged into it instead of creating a duplicate. Each source is (platform, target_type ∈ account|hashtag|keyword, target_value). Returns the full watchlist including all active sources.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().describe("Watchlist display name (1-200 chars). Idempotent: same name reuses the existing watchlist."),
+    sources: z
+      .array(
+        z.object({
+          platform: z.string().describe("Platform — e.g. tiktok, instagram, youtube"),
+          target_type: z.enum(["account", "hashtag", "keyword"]).describe("Source kind"),
+          target_value: z.string().describe("@handle, hashtag (without #), or keyword text"),
+          original_display_value: z.string().optional().describe("Optional human-friendly form (e.g. '#glassskin' or '@drunkelephant') if it differs from target_value"),
+        }),
+      )
+      .optional()
+      .describe("Initial sources to monitor. May be empty; add later with gen_add_watchlist_source."),
+    project_id: z.union([z.string(), z.number()]).optional().describe("Optional Rails project id to link this watchlist to a project shell"),
+    conversation_id: z.string().optional().describe("Optional chat conversation that triggered creation (for attribution)"),
+    created_by_run_id: z.string().optional().describe("Optional agent_run id that triggered creation (for attribution)"),
+  },
+  async ({ agent_id, name, sources, project_id, conversation_id, created_by_run_id }) => {
+    const body: Record<string, unknown> = { name };
+    if (sources !== undefined) body.sources = sources;
+    if (project_id !== undefined) body.project_id = project_id;
+    if (conversation_id !== undefined) body.conversation_id = conversation_id;
+    if (created_by_run_id !== undefined) body.created_by_run_id = created_by_run_id;
+    const data = await agentCoreApiCall(
+      "POST",
+      `/agents/${agent_id}/watchlists`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_get_watchlist",
+  "Step 3 (Monitoring): Fetch a single watchlist by id, including its full active sources list. Returns 404 if the watchlist is soft-deleted.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id (UUID)"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "GET",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_update_watchlist",
+  "Step 3 (Monitoring): Update a watchlist's mutable fields (name, project_id, rails_project_error). Use gen_pause_watchlist or gen_resume_watchlist for status changes; use gen_delete_watchlist to remove. Only the fields you pass are updated.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    name: z.string().optional().describe("New display name"),
+    project_id: z.union([z.string(), z.number()]).optional().describe("New Rails project id to link"),
+    rails_project_error: z.string().optional().describe("Last Rails project sync error, if any"),
+  },
+  async ({ agent_id, watchlist_id, name, project_id, rails_project_error }) => {
+    const body: Record<string, unknown> = {};
+    if (name !== undefined) body.name = name;
+    if (project_id !== undefined) body.project_id = project_id;
+    if (rails_project_error !== undefined) body.rails_project_error = rails_project_error;
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_pause_watchlist",
+  "Step 3 (Monitoring): Pause a watchlist without deleting it. Sets intent_active=false so the scheduler stops queueing scrapes, but the watchlist + its sources are preserved. Use gen_resume_watchlist to re-enable. Use gen_delete_watchlist to permanently remove.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      { intent_active: false },
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_resume_watchlist",
+  "Step 3 (Monitoring): Resume a paused watchlist. Sets intent_active=true so the scheduler resumes queueing scrapes for the watchlist's sources.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      { intent_active: true },
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_delete_watchlist",
+  "Step 3 (Monitoring): Soft-delete a watchlist. Marks the watchlist and all its sources as inactive and deleted. The data is retained but no longer returned by gen_list_watchlists or gen_get_watchlist. Use gen_pause_watchlist if you only want to temporarily stop monitoring.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "DELETE",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_add_watchlist_source",
+  "Step 3 (Monitoring): Add a monitoring source to an existing watchlist, or restore one that was previously removed. Idempotent on (platform, target_type, target_value) — adding the same source twice returns the existing row. target_type must be one of: account (a username/handle), hashtag (a tag name), or keyword (free text search).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    platform: z.string().describe("Platform — e.g. tiktok, instagram, youtube"),
+    target_type: z.enum(["account", "hashtag", "keyword"]).describe("Source kind: account=@handle, hashtag=tag (no #), keyword=free text"),
+    target_value: z.string().describe("@handle, hashtag name, or keyword text"),
+    original_display_value: z.string().optional().describe("Optional original form (e.g. '#glassskin')"),
+  },
+  async ({ agent_id, watchlist_id, platform, target_type, target_value, original_display_value }) => {
+    const body: Record<string, unknown> = { platform, target_type, target_value };
+    if (original_display_value !== undefined) {
+      body.original_display_value = original_display_value;
+    }
+    const data = await agentCoreApiCall(
+      "POST",
+      `/agents/${agent_id}/watchlists/${watchlist_id}/sources`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_remove_watchlist_source",
+  "Step 3 (Monitoring): Remove a single source from a watchlist. Pass EITHER source_id (preferred when known) OR all three of platform/target_type/target_value to remove by key. Soft-delete: the source row is marked inactive but retained.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    source_id: z.string().optional().describe("The source id (preferred). If omitted, all three of platform/target_type/target_value are required."),
+    platform: z.string().optional().describe("Platform (only needed when source_id is omitted)"),
+    target_type: z.enum(["account", "hashtag", "keyword"]).optional().describe("Source kind (only needed when source_id is omitted)"),
+    target_value: z.string().optional().describe("Source value (only needed when source_id is omitted)"),
+  },
+  async ({ agent_id, watchlist_id, source_id, platform, target_type, target_value }) => {
+    if (source_id) {
+      const data = await agentCoreApiCall(
+        "DELETE",
+        `/agents/${agent_id}/watchlists/${watchlist_id}/sources/${source_id}`,
+      );
+      return jsonResult(data);
+    }
+    if (!platform || !target_type || !target_value) {
+      throw new Error(
+        "gen_remove_watchlist_source requires either source_id, or all three of platform/target_type/target_value",
+      );
+    }
+    const query = new URLSearchParams({
+      platform,
+      target_type,
+      target_value,
+    }).toString();
+    const data = await agentCoreApiCall(
+      "DELETE",
+      `/agents/${agent_id}/watchlists/${watchlist_id}/sources?${query}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3 (Monitoring): Recurring Jobs ("Daily Tasks") — gen-agentic
+//
+// A recurring job runs a prompt on a schedule, optionally delivering results
+// via email. Each scheduled run is gated by available credits: a job stays
+// configured even when credits run out, and resumes when credits return.
+//
+// All endpoints live on agent.gen.pro. Auth: PAT (X-API-Key).
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "gen_list_recurring_jobs",
+  "Step 3 (Monitoring): List all non-deleted recurring jobs ('daily tasks') for an agent. Returns active, paused, and inactive jobs sorted newest first. Use gen_pause_recurring_job or gen_delete_recurring_job to change state.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the recurring jobs"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentApiCall(
+      "GET",
+      `/agents/${agent_id}/recurring-jobs`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_create_recurring_job",
+  "Step 3 (Monitoring): Create a recurring agent job ('daily task'). job_type=generate_content_ideas is the most common default. schedule.cadence ∈ {daily, weekly, hourly}; pass timezone (e.g. 'UTC' or 'America/Los_Angeles') and time_of_day ('HH:MM' 24h) for predictable firing. delivery.type ∈ {chat_only, email}. Each scheduled run is credit-gated: the job remains configured if credits run out and resumes when they return.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().optional().describe("Display name. Defaults to the first 80 chars of prompt if omitted."),
+    job_type: z.string().describe("Job type. Default content-ideas pipeline: 'generate_content_ideas'."),
+    prompt: z.string().describe("Natural-language prompt the agent runs each cycle (e.g. 'Generate 5 TikTok content ideas for my skincare brand')"),
+    schedule: z
+      .object({
+        cadence: z.enum(["daily", "weekly", "hourly"]).describe("How often to run"),
+        timezone: z.string().describe("IANA timezone (e.g. 'UTC', 'America/Los_Angeles')"),
+        time_of_day: z.string().optional().describe("Local clock time as 'HH:MM' (24h). Required for daily/weekly cadences."),
+      })
+      .describe("Schedule configuration"),
+    delivery: z
+      .object({
+        type: z.enum(["chat_only", "email"]).describe("chat_only writes results into the conversation; email also sends a templated digest"),
+      })
+      .describe("How results are delivered"),
+    next_run_at: z.string().optional().describe("ISO-8601 timestamp to schedule the first run (defaults to the next slot from cadence)"),
+  },
+  async ({ agent_id, name, job_type, prompt, schedule, delivery, next_run_at }) => {
+    const body: Record<string, unknown> = { job_type, prompt, schedule, delivery };
+    if (name !== undefined) body.name = name;
+    if (next_run_at !== undefined) body.next_run_at = next_run_at;
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_ensure_default_recurring_job",
+  "Step 3 (Monitoring): Idempotently ensure the agent has the default daily content-ideas recurring job. If one already exists for this agent, returns it without changes; otherwise creates it with the standard prompt ('Generate content ideas'), daily cadence at 09:00 UTC, and chat_only delivery. The response 'created' field indicates whether a new job was created (true) or an existing one was returned (false).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/defaults`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_get_recurring_job",
+  "Step 3 (Monitoring): Fetch a single recurring job by id. Returns 404 if the job is deleted.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "GET",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_update_recurring_job",
+  "Step 3 (Monitoring): Update a recurring job's mutable fields. Use gen_pause_recurring_job / gen_resume_recurring_job for status transitions instead of patching status directly. Only fields you pass are updated; pass schedule or delivery as full objects (they replace the existing value).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+    name: z.string().optional().describe("New display name"),
+    prompt: z.string().optional().describe("New prompt the agent will run each cycle"),
+    schedule: z
+      .object({
+        cadence: z.enum(["daily", "weekly", "hourly"]),
+        timezone: z.string(),
+        time_of_day: z.string().optional(),
+      })
+      .optional()
+      .describe("Replacement schedule object"),
+    delivery: z
+      .object({
+        type: z.enum(["chat_only", "email"]),
+      })
+      .optional()
+      .describe("Replacement delivery object"),
+    next_run_at: z.string().optional().describe("ISO-8601 timestamp to override the next run time"),
+  },
+  async ({ agent_id, job_id, name, prompt, schedule, delivery, next_run_at }) => {
+    const body: Record<string, unknown> = {};
+    if (name !== undefined) body.name = name;
+    if (prompt !== undefined) body.prompt = prompt;
+    if (schedule !== undefined) body.schedule = schedule;
+    if (delivery !== undefined) body.delivery = delivery;
+    if (next_run_at !== undefined) body.next_run_at = next_run_at;
+    const data = await agentApiCall(
+      "PATCH",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_pause_recurring_job",
+  "Step 3 (Monitoring): Pause a recurring job. status → 'paused'. The scheduler stops queueing new runs until gen_resume_recurring_job is called. Does NOT delete the job or its history.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/${job_id}/pause`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_resume_recurring_job",
+  "Step 3 (Monitoring): Resume a paused recurring job. status → 'active'. The scheduler resumes queueing runs at the configured cadence.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/${job_id}/resume`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_delete_recurring_job",
+  "Step 3 (Monitoring): Soft-delete a recurring job. status → 'deleted'. The job stops running and no longer appears in gen_list_recurring_jobs. Use gen_pause_recurring_job if you only want to temporarily stop runs. Returns 204 No Content on success.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "DELETE",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+    );
+    return jsonResult(data);
+  },
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
