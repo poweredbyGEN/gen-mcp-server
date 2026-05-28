@@ -2413,6 +2413,58 @@ server.tool(
   },
 );
 
+server.tool(
+  "gen_query_watchlist",
+  "Step 3 (Monitoring): Ask a question about a watchlist with typed filters (timeframe, count, sort, min engagement rate). Wraps the agent chat path that fans out one DW call per watchlist target with byte-identical filters. Use this for programmatic 'top N from @list:foo by engagement rate in the last 90 days' style asks instead of building a natural-language prompt yourself. Returns a run_id you poll with gen_get_run_status; the final answer contains a video grid plus a natural-language summary.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id to query"),
+    question: z.string().describe("What to ask about the watchlist — e.g. 'top hooks', 'top videos', 'what are people saying', 'trending music'. Drives the analysis kind (top_hooks / trend_videos / comment_themes / top_sounds / top_creators / engagement_summary)."),
+    days: z.number().int().min(1).max(365).optional().describe("Time window in days (1-365). When omitted, the chat layer's default policy applies."),
+    limit: z.number().int().min(1).max(1000).optional().describe("How many results to return (1-1000). When omitted, defaults to 100."),
+    sort_by: z.enum(["engagement_rate", "watch_count", "like_count", "comment_count", "share_count", "save_count", "posted_at", "trending_score"]).optional().describe("Sort key. Without it, the backend default ranking applies."),
+    min_engagement_rate: z.number().min(0).max(1).optional().describe("Minimum engagement rate as a 0.0-1.0 fraction (0.05 == 5%)."),
+    return_all: z.boolean().optional().describe("Walk every matching row up to the DW hard cap (1000). Pairs with async pagination downstream. Defaults to false."),
+  },
+  async ({ agent_id, watchlist_id, question, days, limit, sort_by, min_engagement_rate, return_all }) => {
+    // Build a natural-language prompt that the chat-side per-intent
+    // extractor (src/gen/intents/watchlist_analysis.py) parses
+    // deterministically. The chat layer's typed extractor + worker
+    // wiring (GEN-3420) honors every filter byte-identically across
+    // the fan-out; this tool is the programmatic surface over that
+    // contract.
+    const parts: string[] = [];
+    if (limit !== undefined) parts.push(`top ${limit}`);
+    parts.push(question);
+    parts.push(`from @list:${watchlist_id}`);
+    if (sort_by !== undefined) {
+      const sortLabel: Record<string, string> = {
+        engagement_rate: "engagement rate",
+        watch_count: "views",
+        like_count: "likes",
+        comment_count: "comments",
+        share_count: "shares",
+        save_count: "saves",
+        posted_at: "newest",
+        trending_score: "trending",
+      };
+      parts.push(`by ${sortLabel[sort_by]}`);
+    }
+    if (days !== undefined) parts.push(`in the last ${days} days`);
+    if (min_engagement_rate !== undefined) {
+      parts.push(`with engagement rate above ${(min_engagement_rate * 100).toFixed(1)}%`);
+    }
+    if (return_all) parts.push("all");
+
+    const message = parts.join(" ");
+    const data = await agentApiCall("POST", "/agent/run", {
+      message,
+      agent_id,
+    });
+    return jsonResult(data);
+  },
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 3 (Monitoring): Recurring Jobs ("Daily Tasks") — gen-agentic
 //
