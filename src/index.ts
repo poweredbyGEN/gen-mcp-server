@@ -322,12 +322,12 @@ Credits are pre-charged and refunded on failure/stop.
 
 \`\`\`bash
 # 1. Fill the script cell (ingredient text column)
-curl -X PATCH https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<text_cell_id> \\
+curl -X PATCH https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<text_cell_id> \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{"agent_id":"<agent_id>","value":"30-second TikTok about 5am workouts, hook then 3 tips."}'
 
 # 2. Run text generation (refines into a polished script)
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<text_cell_id>/generate \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<text_cell_id>/generate \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{
     "agent_id": "<agent_id>",
@@ -342,7 +342,7 @@ curl "https://api.gen.pro/v1/generations/<gen_id>" \\
 # → {"status":"completed","result":"Pov: You wake up at 4:55..."}
 
 # 4. Then a video in a different cell, using the polished script
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<video_cell_id>/generate \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<video_cell_id>/generate \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{
     "agent_id": "<agent_id>",
@@ -376,7 +376,7 @@ connected social accounts.
 
 \`\`\`bash
 # 1. Render the final cell
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<final_cell_id>/render \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<final_cell_id>/render \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{"agent_id":"<agent_id>"}'
 # → {"generation_id":"<gen_id>"}
@@ -456,7 +456,7 @@ All canonical names below are accepted; the server maps to internal names.
 
 ### render (Final composite)
 - Canonical: \`render\`
-- Endpoint: \`POST /v1/autocontentengine/{id}/cells/{cell_id}/render?agent_id={id}\`
+- Endpoint: \`POST /v1/vidsheet/{id}/cells/{cell_id}/render?agent_id={id}\`
 - Use \`gen_render_video\` — composites all layers into the final video.
 
 # Column Types & Roles
@@ -1641,7 +1641,7 @@ server.tool(
     title: z.string().describe("Title for the new engine"),
   },
   async ({ agent_id, title }) => {
-    const data = await apiCall("POST", "/autocontentengine", { agent_id, title });
+    const data = await apiCall("POST", "/vidsheet", { agent_id, title });
     return jsonResult(data);
   }
 );
@@ -1654,7 +1654,7 @@ server.tool(
     engine_id: z.string().describe("The engine ID to retrieve"),
   },
   async ({ agent_id, engine_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1670,7 +1670,7 @@ server.tool(
   async ({ agent_id, engine_id, target_agent_id }) => {
     const body: Record<string, string> = { agent_id };
     if (target_agent_id) body.target_agent_id = target_agent_id;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/clone`, body);
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/clone`, body);
     return jsonResult(data);
   }
 );
@@ -1693,7 +1693,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/columns?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/columns?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1711,7 +1711,7 @@ server.tool(
   async ({ engine_id, agent_id, title, type, position }) => {
     const body: Record<string, unknown> = { agent_id, title, type };
     if (position !== undefined) body.position = position;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/columns`, body);
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/columns`, body);
     return jsonResult(data);
   }
 );
@@ -1734,7 +1734,7 @@ server.tool(
     if (type !== undefined) spreadsheet_column.type = type;
     if (position !== undefined) spreadsheet_column.position = position;
     body.spreadsheet_column = spreadsheet_column;
-    const data = await apiCall("PATCH", `/autocontentengine/${engine_id}/columns/${column_id}`, body);
+    const data = await apiCall("PATCH", `/vidsheet/${engine_id}/columns/${column_id}`, body);
     return jsonResult(data);
   }
 );
@@ -1750,7 +1750,7 @@ server.tool(
   async ({ engine_id, column_id, agent_id }) => {
     const data = await apiCall(
       "DELETE",
-      `/autocontentengine/${engine_id}/columns/${column_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/columns/${column_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1766,7 +1766,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/rows?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/rows?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1779,7 +1779,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/rows`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/rows`, { agent_id });
     return jsonResult(data);
   }
 );
@@ -1793,7 +1793,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, row_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/rows/${row_id}/duplicate`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/rows/${row_id}/duplicate`, { agent_id });
     return jsonResult(data);
   }
 );
@@ -1809,7 +1809,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, cell_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/cells/${cell_id}?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/cells/${cell_id}?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1824,7 +1824,7 @@ server.tool(
     value: z.string().describe("The new cell value"),
   },
   async ({ engine_id, cell_id, agent_id, value }) => {
-    const data = await apiCall("PATCH", `/autocontentengine/${engine_id}/cells/${cell_id}`, { agent_id, value });
+    const data = await apiCall("PATCH", `/vidsheet/${engine_id}/cells/${cell_id}`, { agent_id, spreadsheet_cell: { value } });
     return jsonResult(data);
   }
 );
@@ -1843,9 +1843,9 @@ server.tool(
     position: z.number().optional().describe("Position of the layer (0-indexed)"),
   },
   async ({ engine_id, cell_id, agent_id, name, type, position }) => {
-    const body: Record<string, unknown> = { agent_id, name, type };
-    if (position !== undefined) body.position = position;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/layers`, body);
+    const videoLayer: Record<string, unknown> = { name, type };
+    if (position !== undefined) videoLayer.position = position;
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/layers`, { agent_id, video_layer: videoLayer });
     return jsonResult(data);
   }
 );
@@ -1862,7 +1862,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "GET",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1891,7 +1891,7 @@ server.tool(
     body.video_layer = video_layer;
     const data = await apiCall(
       "PATCH",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}`,
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}`,
       body
     );
     return jsonResult(data);
@@ -1910,7 +1910,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "DELETE",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1926,7 +1926,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/global_variables?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/global_variables?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -2081,7 +2081,7 @@ Credits are pre-charged and refunded on failure/stop.`,
     const railsType = resolveGenerationType(generation_type, extraData as Record<string, unknown> | undefined);
     const body: Record<string, unknown> = { agent_id, generation_type: railsType };
     if (extraData) body.data = extraData;
-    const result = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/generate`, body);
+    const result = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/generate`, body);
     return jsonResult(result);
   }
 );
@@ -2098,7 +2098,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "POST",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}/generate`,
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}/generate`,
       { agent_id }
     );
     return jsonResult(data);
@@ -2157,7 +2157,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, cell_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/render`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/render`, { agent_id });
     return jsonResult(data);
   }
 );
