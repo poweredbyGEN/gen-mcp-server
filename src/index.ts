@@ -1327,23 +1327,48 @@ server.tool(
   "Step 1 (Agent Setup): Create a new Personal Access Token. The plain-text token is returned ONCE — store it securely.",
   {
     name: z.string().optional().describe("Descriptive name for the API key"),
+    expires_in: z.number().int().positive().optional().describe("Seconds until the key expires. Omit for a non-expiring key."),
   },
-  async ({ name }) => {
+  async ({ name, expires_in }) => {
     const body: Record<string, unknown> = {};
     if (name) body.name = name;
+    if (expires_in !== undefined) body.expires_in = expires_in;
     const data = await apiCall("POST", "/persisted_tokens", body);
     return jsonResult(data);
   }
 );
 
 server.tool(
+  "gen_update_api_key",
+  "Step 1 (Agent Setup): Rename an existing Personal Access Token. Only the display name can be changed; the token value is immutable.",
+  {
+    token_id: z.string().describe("The token ID to rename"),
+    name: z.string().describe("New display name for the API key"),
+  },
+  async ({ token_id, name }) => {
+    const data = await apiCall("PATCH", `/persisted_tokens/${token_id}`, { persisted_token: { name } });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
   "gen_revoke_api_key",
-  "Step 1 (Agent Setup): Revoke (delete) a Personal Access Token.",
+  "Step 1 (Agent Setup): Revoke (delete) a single Personal Access Token. Use gen_revoke_all_api_keys to revoke every key at once.",
   {
     token_id: z.string().describe("The token ID to revoke"),
   },
   async ({ token_id }) => {
     const data = await apiCall("DELETE", `/persisted_tokens/${token_id}/revoke`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_revoke_all_api_keys",
+  "Step 1 (Agent Setup): Revoke ALL of the user's Personal Access Tokens at once. Irreversible — every existing key stops working immediately. Use gen_revoke_api_key to revoke just one.",
+  {},
+  async () => {
+    const data = await apiCall("DELETE", "/persisted_tokens/revoke_all");
     return jsonResult(data);
   }
 );
@@ -1464,6 +1489,18 @@ server.tool(
 );
 
 server.tool(
+  "gen_expand_idea",
+  "Step 2 (Content Ideas): Expand a single content idea into a full project_manifest (the structured layer/scene plan a vidsheet is built from). Use this before cloning an idea into a vidsheet in Step 3 when the idea was generated without a manifest. Idempotent — returns the cached manifest if the idea is already expanded. Note the path has no /agent/ segment.",
+  {
+    idea_id: z.string().describe("The idea ID to expand"),
+  },
+  async ({ idea_id }) => {
+    const data = await agentApiCall("POST", `/ideas/${idea_id}/expand`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
   "gen_list_conversations",
   "Step 2 (Content Ideas): List agent chat conversations with titles and metadata.",
   {
@@ -1485,6 +1522,31 @@ server.tool(
   },
   async ({ conversation_id }) => {
     const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_session_preferences",
+  "Step 2 (Content Ideas): Read the per-conversation session preferences (temporary creative rules scoped to this one conversation, distinct from the agent's long-term preferences). Returns null if none are set.",
+  {
+    conversation_id: z.string().describe("The conversation ID"),
+  },
+  async ({ conversation_id }) => {
+    const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}/session-preferences`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_session_preferences",
+  "Step 2 (Content Ideas): Set the per-conversation session preferences (creative rules applied only within this conversation; they do not change the agent's saved long-term preferences). Replaces the existing value.",
+  {
+    conversation_id: z.string().describe("The conversation ID"),
+    preferences: z.string().describe("The session preferences text to apply to this conversation"),
+  },
+  async ({ conversation_id, preferences }) => {
+    const data = await agentApiCall("PATCH", `/agent/conversations/${conversation_id}/session-preferences`, { preferences });
     return jsonResult(data);
   }
 );
