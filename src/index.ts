@@ -2456,7 +2456,7 @@ server.tool(
     if (min_engagement_rate !== undefined) {
       parts.push(`with engagement rate above ${(min_engagement_rate * 100).toFixed(1)}%`);
     }
-    if (return_all) parts.push("all");
+    if (return_all) parts.push("all results");
 
     const message = parts.join(" ");
     const data = await agentApiCall("POST", "/agent/run", {
