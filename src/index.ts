@@ -506,10 +506,12 @@ idea generation; query them through the chat interface, not directly here.
 A **Recurring Job** runs a prompt on a schedule.
 
 \`\`\`
-schedule.cadence ∈ {daily, weekly, hourly}
+schedule.cadence ∈ {daily, weekly}
 schedule.timezone   = IANA tz (e.g. "America/Los_Angeles")
 schedule.time_of_day = "HH:MM" 24h (required for daily/weekly)
+schedule.days_of_week = [0..6] (0=Mon … 6=Sun); REQUIRED for weekly, omit for daily
 delivery.type ∈ {chat_only, email}
+delivery.email = recipient address; REQUIRED when type=email, omit for chat_only
 status ∈ {active, paused, deleted}
 \`\`\`
 
@@ -2492,7 +2494,7 @@ server.tool(
 
 server.tool(
   "gen_create_recurring_job",
-  "Step 3 (Monitoring): Create a recurring agent job ('daily task'). job_type=generate_content_ideas is the most common default. schedule.cadence ∈ {daily, weekly, hourly}; pass timezone (e.g. 'UTC' or 'America/Los_Angeles') and time_of_day ('HH:MM' 24h) for predictable firing. delivery.type ∈ {chat_only, email}. Each scheduled run is credit-gated: the job remains configured if credits run out and resumes when they return.",
+  "Step 3 (Monitoring): Create a recurring agent job ('daily task'). job_type=generate_content_ideas is the most common default. schedule.cadence ∈ {daily, weekly}; pass timezone (e.g. 'UTC' or 'America/Los_Angeles') and time_of_day ('HH:MM' 24h) for predictable firing. For weekly cadence, days_of_week (0=Mon … 6=Sun) is REQUIRED; for daily it must be omitted. delivery.type ∈ {chat_only, email}; when type=email, the email address is REQUIRED. Each scheduled run is credit-gated: the job remains configured if credits run out and resumes when they return.",
   {
     agent_id: z.string().describe("The agent ID"),
     name: z.string().optional().describe("Display name. Defaults to the first 80 chars of prompt if omitted."),
@@ -2500,14 +2502,16 @@ server.tool(
     prompt: z.string().describe("Natural-language prompt the agent runs each cycle (e.g. 'Generate 5 TikTok content ideas for my skincare brand')"),
     schedule: z
       .object({
-        cadence: z.enum(["daily", "weekly", "hourly"]).describe("How often to run"),
+        cadence: z.enum(["daily", "weekly"]).describe("How often to run"),
         timezone: z.string().describe("IANA timezone (e.g. 'UTC', 'America/Los_Angeles')"),
         time_of_day: z.string().optional().describe("Local clock time as 'HH:MM' (24h). Required for daily/weekly cadences."),
+        days_of_week: z.array(z.number().int().min(0).max(6)).optional().describe("Days to run (0=Mon … 6=Sun). REQUIRED when cadence='weekly'; must be omitted when cadence='daily'. No duplicates."),
       })
       .describe("Schedule configuration"),
     delivery: z
       .object({
         type: z.enum(["chat_only", "email"]).describe("chat_only writes results into the conversation; email also sends a templated digest"),
+        email: z.string().optional().describe("Recipient email. REQUIRED when type='email'; must be omitted when type='chat_only'."),
       })
       .describe("How results are delivered"),
     next_run_at: z.string().optional().describe("ISO-8601 timestamp to schedule the first run (defaults to the next slot from cadence)"),
@@ -2566,18 +2570,20 @@ server.tool(
     prompt: z.string().optional().describe("New prompt the agent will run each cycle"),
     schedule: z
       .object({
-        cadence: z.enum(["daily", "weekly", "hourly"]),
+        cadence: z.enum(["daily", "weekly"]),
         timezone: z.string(),
         time_of_day: z.string().optional(),
+        days_of_week: z.array(z.number().int().min(0).max(6)).optional().describe("Days to run (0=Mon … 6=Sun). REQUIRED when cadence='weekly'; omit when 'daily'."),
       })
       .optional()
-      .describe("Replacement schedule object"),
+      .describe("Replacement schedule object (full replacement)"),
     delivery: z
       .object({
         type: z.enum(["chat_only", "email"]),
+        email: z.string().optional().describe("Recipient email. REQUIRED when type='email'; omit when 'chat_only'."),
       })
       .optional()
-      .describe("Replacement delivery object"),
+      .describe("Replacement delivery object (full replacement)"),
     next_run_at: z.string().optional().describe("ISO-8601 timestamp to override the next run time"),
   },
   async ({ agent_id, job_id, name, prompt, schedule, delivery, next_run_at }) => {
