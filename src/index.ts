@@ -7,6 +7,8 @@ import { z } from "zod";
 const API_KEY = process.env.GEN_API_KEY;
 const BASE_URL = process.env.GEN_API_BASE_URL || "https://api.gen.pro/v1";
 const AGENT_API_BASE = process.env.GEN_AGENT_API_URL || "https://agent.gen.pro/v1";
+const AGENT_CORE_API_BASE =
+  process.env.GEN_AGENT_CORE_API_URL || "https://agent-core.gen.pro/v1";
 
 if (!API_KEY) {
   console.error("GEN_API_KEY environment variable is required");
@@ -320,12 +322,12 @@ Credits are pre-charged and refunded on failure/stop.
 
 \`\`\`bash
 # 1. Fill the script cell (ingredient text column)
-curl -X PATCH https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<text_cell_id> \\
+curl -X PATCH https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<text_cell_id> \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{"agent_id":"<agent_id>","value":"30-second TikTok about 5am workouts, hook then 3 tips."}'
 
 # 2. Run text generation (refines into a polished script)
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<text_cell_id>/generate \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<text_cell_id>/generate \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{
     "agent_id": "<agent_id>",
@@ -340,7 +342,7 @@ curl "https://api.gen.pro/v1/generations/<gen_id>" \\
 # → {"status":"completed","result":"Pov: You wake up at 4:55..."}
 
 # 4. Then a video in a different cell, using the polished script
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<video_cell_id>/generate \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<video_cell_id>/generate \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{
     "agent_id": "<agent_id>",
@@ -374,7 +376,7 @@ connected social accounts.
 
 \`\`\`bash
 # 1. Render the final cell
-curl -X POST https://api.gen.pro/v1/autocontentengine/<engine_id>/cells/<final_cell_id>/render \\
+curl -X POST https://api.gen.pro/v1/vidsheet/<engine_id>/cells/<final_cell_id>/render \\
   -H "X-API-Key: \$GEN_API_KEY" -H "Content-Type: application/json" \\
   -d '{"agent_id":"<agent_id>"}'
 # → {"generation_id":"<gen_id>"}
@@ -454,7 +456,7 @@ All canonical names below are accepted; the server maps to internal names.
 
 ### render (Final composite)
 - Canonical: \`render\`
-- Endpoint: \`POST /v1/autocontentengine/{id}/cells/{cell_id}/render?agent_id={id}\`
+- Endpoint: \`POST /v1/vidsheet/{id}/cells/{cell_id}/render?agent_id={id}\`
 - Use \`gen_render_video\` — composites all layers into the final video.
 
 # Column Types & Roles
@@ -474,6 +476,55 @@ All canonical names below are accepted; the server maps to internal names.
 | \`stats\` | Statistics/metadata | No (system) |
 | \`global_variable_name\` | Variable name column | No (system) |
 | \`global_variable_value\` | Variable value column | No (system) |
+
+# Step 3 (Monitoring & Automation)
+
+Two long-lived primitives let an agent watch the world and act on a schedule.
+Both are CRUD-only here — they're free to manage; downstream scrapes and
+scheduled runs bill normally.
+
+## Watchlists (\`agent-core.gen.pro\`)
+
+A **Watchlist** is a named collection of \`(platform, target_type, target_value)\`
+sources you want continuously monitored. \`target_type ∈ {account, hashtag, keyword}\`.
+
+Typical flow:
+
+1. \`gen_create_watchlist\` with name + initial sources[]. Creation is
+   idempotent on name (case-insensitive): re-using the same name merges new
+   sources into the existing watchlist.
+2. \`gen_add_watchlist_source\` / \`gen_remove_watchlist_source\` to evolve it.
+3. \`gen_pause_watchlist\` / \`gen_resume_watchlist\` to toggle monitoring intent
+   without losing the configuration. \`gen_delete_watchlist\` is the permanent
+   form.
+
+Scraped results from watchlist sources feed back into agent chat and content
+idea generation; query them through the chat interface, not directly here.
+
+## Recurring Jobs / Daily Tasks (\`agent.gen.pro\`)
+
+A **Recurring Job** runs a prompt on a schedule.
+
+\`\`\`
+schedule.cadence ∈ {daily, weekly}
+schedule.timezone   = IANA tz (e.g. "America/Los_Angeles")
+schedule.time_of_day = "HH:MM" 24h (required for daily/weekly)
+schedule.days_of_week = [0..6] (0=Mon … 6=Sun); REQUIRED for weekly, omit for daily
+delivery.type ∈ {chat_only, email}
+delivery.email = recipient address; REQUIRED when type=email, omit for chat_only
+status ∈ {active, paused, deleted}
+\`\`\`
+
+Typical flow:
+
+1. \`gen_ensure_default_recurring_job\` for the standard daily "Generate
+   content ideas" task — idempotent, safe to call repeatedly.
+2. \`gen_create_recurring_job\` for any other prompt/cadence/delivery combo.
+3. \`gen_pause_recurring_job\` / \`gen_resume_recurring_job\` for temporary stops;
+   \`gen_delete_recurring_job\` to remove.
+
+Each scheduled run is gated by available credits: a job remains configured
+when credits run out and resumes when credits return.
 
 # Error Format
 
@@ -538,6 +589,35 @@ async function apiCall(method: string, path: string, body?: unknown): Promise<un
 
 async function agentApiCall(method: string, path: string, body?: unknown): Promise<unknown> {
   const url = `${AGENT_API_BASE}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "X-API-Key": API_KEY!,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(`API error ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+async function agentCoreApiCall(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const url = `${AGENT_CORE_API_BASE}${path}`;
   const res = await fetch(url, {
     method,
     headers: {
@@ -1247,23 +1327,48 @@ server.tool(
   "Step 1 (Agent Setup): Create a new Personal Access Token. The plain-text token is returned ONCE — store it securely.",
   {
     name: z.string().optional().describe("Descriptive name for the API key"),
+    expires_in: z.number().int().positive().optional().describe("Seconds until the key expires. Omit for a non-expiring key."),
   },
-  async ({ name }) => {
+  async ({ name, expires_in }) => {
     const body: Record<string, unknown> = {};
     if (name) body.name = name;
+    if (expires_in !== undefined) body.expires_in = expires_in;
     const data = await apiCall("POST", "/persisted_tokens", body);
     return jsonResult(data);
   }
 );
 
 server.tool(
+  "gen_update_api_key",
+  "Step 1 (Agent Setup): Rename an existing Personal Access Token. Only the display name can be changed; the token value is immutable.",
+  {
+    token_id: z.string().describe("The token ID to rename"),
+    name: z.string().describe("New display name for the API key"),
+  },
+  async ({ token_id, name }) => {
+    const data = await apiCall("PATCH", `/persisted_tokens/${token_id}`, { persisted_token: { name } });
+    return jsonResult(data);
+  }
+);
+
+server.tool(
   "gen_revoke_api_key",
-  "Step 1 (Agent Setup): Revoke (delete) a Personal Access Token.",
+  "Step 1 (Agent Setup): Revoke (delete) a single Personal Access Token. Use gen_revoke_all_api_keys to revoke every key at once.",
   {
     token_id: z.string().describe("The token ID to revoke"),
   },
   async ({ token_id }) => {
     const data = await apiCall("DELETE", `/persisted_tokens/${token_id}/revoke`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_revoke_all_api_keys",
+  "Step 1 (Agent Setup): Revoke ALL of the user's Personal Access Tokens at once. Irreversible — every existing key stops working immediately. Use gen_revoke_api_key to revoke just one.",
+  {},
+  async () => {
+    const data = await apiCall("DELETE", "/persisted_tokens/revoke_all");
     return jsonResult(data);
   }
 );
@@ -1384,6 +1489,18 @@ server.tool(
 );
 
 server.tool(
+  "gen_expand_idea",
+  "Step 2 (Content Ideas): Expand a single content idea into a full project_manifest (the structured layer/scene plan a vidsheet is built from). Use this before cloning an idea into a vidsheet in Step 3 when the idea was generated without a manifest. Idempotent — returns the cached manifest if the idea is already expanded. Note the path has no /agent/ segment.",
+  {
+    idea_id: z.string().describe("The idea ID to expand"),
+  },
+  async ({ idea_id }) => {
+    const data = await agentApiCall("POST", `/ideas/${idea_id}/expand`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
   "gen_list_conversations",
   "Step 2 (Content Ideas): List agent chat conversations with titles and metadata.",
   {
@@ -1405,6 +1522,31 @@ server.tool(
   },
   async ({ conversation_id }) => {
     const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_get_session_preferences",
+  "Step 2 (Content Ideas): Read the per-conversation session preferences (temporary creative rules scoped to this one conversation, distinct from the agent's long-term preferences). Returns null if none are set.",
+  {
+    conversation_id: z.string().describe("The conversation ID"),
+  },
+  async ({ conversation_id }) => {
+    const data = await agentApiCall("GET", `/agent/conversations/${conversation_id}/session-preferences`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_update_session_preferences",
+  "Step 2 (Content Ideas): Set the per-conversation session preferences (creative rules applied only within this conversation; they do not change the agent's saved long-term preferences). Replaces the existing value.",
+  {
+    conversation_id: z.string().describe("The conversation ID"),
+    preferences: z.string().describe("The session preferences text to apply to this conversation"),
+  },
+  async ({ conversation_id, preferences }) => {
+    const data = await agentApiCall("PATCH", `/agent/conversations/${conversation_id}/session-preferences`, { preferences });
     return jsonResult(data);
   }
 );
@@ -1563,7 +1705,7 @@ server.tool(
     title: z.string().describe("Title for the new engine"),
   },
   async ({ agent_id, title }) => {
-    const data = await apiCall("POST", "/autocontentengine", { agent_id, title });
+    const data = await apiCall("POST", "/vidsheet", { agent_id, title });
     return jsonResult(data);
   }
 );
@@ -1576,7 +1718,7 @@ server.tool(
     engine_id: z.string().describe("The engine ID to retrieve"),
   },
   async ({ agent_id, engine_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1592,7 +1734,7 @@ server.tool(
   async ({ agent_id, engine_id, target_agent_id }) => {
     const body: Record<string, string> = { agent_id };
     if (target_agent_id) body.target_agent_id = target_agent_id;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/clone`, body);
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/clone`, body);
     return jsonResult(data);
   }
 );
@@ -1615,7 +1757,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/columns?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/columns?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1633,7 +1775,7 @@ server.tool(
   async ({ engine_id, agent_id, title, type, position }) => {
     const body: Record<string, unknown> = { agent_id, title, type };
     if (position !== undefined) body.position = position;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/columns`, body);
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/columns`, body);
     return jsonResult(data);
   }
 );
@@ -1656,7 +1798,7 @@ server.tool(
     if (type !== undefined) spreadsheet_column.type = type;
     if (position !== undefined) spreadsheet_column.position = position;
     body.spreadsheet_column = spreadsheet_column;
-    const data = await apiCall("PATCH", `/autocontentengine/${engine_id}/columns/${column_id}`, body);
+    const data = await apiCall("PATCH", `/vidsheet/${engine_id}/columns/${column_id}`, body);
     return jsonResult(data);
   }
 );
@@ -1672,7 +1814,7 @@ server.tool(
   async ({ engine_id, column_id, agent_id }) => {
     const data = await apiCall(
       "DELETE",
-      `/autocontentengine/${engine_id}/columns/${column_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/columns/${column_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1688,7 +1830,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/rows?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/rows?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1701,7 +1843,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/rows`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/rows`, { agent_id });
     return jsonResult(data);
   }
 );
@@ -1715,7 +1857,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, row_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/rows/${row_id}/duplicate`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/rows/${row_id}/duplicate`, { agent_id });
     return jsonResult(data);
   }
 );
@@ -1731,7 +1873,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, cell_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/cells/${cell_id}?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/cells/${cell_id}?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -1746,7 +1888,7 @@ server.tool(
     value: z.string().describe("The new cell value"),
   },
   async ({ engine_id, cell_id, agent_id, value }) => {
-    const data = await apiCall("PATCH", `/autocontentengine/${engine_id}/cells/${cell_id}`, { agent_id, value });
+    const data = await apiCall("PATCH", `/vidsheet/${engine_id}/cells/${cell_id}`, { agent_id, spreadsheet_cell: { value } });
     return jsonResult(data);
   }
 );
@@ -1765,9 +1907,9 @@ server.tool(
     position: z.number().optional().describe("Position of the layer (0-indexed)"),
   },
   async ({ engine_id, cell_id, agent_id, name, type, position }) => {
-    const body: Record<string, unknown> = { agent_id, name, type };
-    if (position !== undefined) body.position = position;
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/layers`, body);
+    const videoLayer: Record<string, unknown> = { name, type };
+    if (position !== undefined) videoLayer.position = position;
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/layers`, { agent_id, video_layer: videoLayer });
     return jsonResult(data);
   }
 );
@@ -1784,7 +1926,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "GET",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1813,7 +1955,7 @@ server.tool(
     body.video_layer = video_layer;
     const data = await apiCall(
       "PATCH",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}`,
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}`,
       body
     );
     return jsonResult(data);
@@ -1832,7 +1974,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "DELETE",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}?agent_id=${agent_id}`
     );
     return jsonResult(data);
   }
@@ -1848,7 +1990,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, agent_id }) => {
-    const data = await apiCall("GET", `/autocontentengine/${engine_id}/global_variables?agent_id=${agent_id}`);
+    const data = await apiCall("GET", `/vidsheet/${engine_id}/global_variables?agent_id=${agent_id}`);
     return jsonResult(data);
   }
 );
@@ -2003,7 +2145,7 @@ Credits are pre-charged and refunded on failure/stop.`,
     const railsType = resolveGenerationType(generation_type, extraData as Record<string, unknown> | undefined);
     const body: Record<string, unknown> = { agent_id, generation_type: railsType };
     if (extraData) body.data = extraData;
-    const result = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/generate`, body);
+    const result = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/generate`, body);
     return jsonResult(result);
   }
 );
@@ -2020,7 +2162,7 @@ server.tool(
   async ({ engine_id, cell_id, layer_id, agent_id }) => {
     const data = await apiCall(
       "POST",
-      `/autocontentengine/${engine_id}/cells/${cell_id}/layers/${layer_id}/generate`,
+      `/vidsheet/${engine_id}/cells/${cell_id}/layers/${layer_id}/generate`,
       { agent_id }
     );
     return jsonResult(data);
@@ -2079,7 +2221,7 @@ server.tool(
     agent_id: z.string().describe("The agent ID that owns the engine"),
   },
   async ({ engine_id, cell_id, agent_id }) => {
-    const data = await apiCall("POST", `/autocontentengine/${engine_id}/cells/${cell_id}/render`, { agent_id });
+    const data = await apiCall("POST", `/vidsheet/${engine_id}/cells/${cell_id}/render`, { agent_id });
     return jsonResult(data);
   }
 );
@@ -2118,6 +2260,456 @@ server.tool(
     });
     return jsonResult(data);
   }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3 (Monitoring): Watchlists — agent-core
+//
+// A Watchlist is a named collection of social-media monitoring targets for an
+// agent. Each target ("source") is (platform, target_type, target_value).
+// target_type ∈ {account, hashtag, keyword}. Scraped data feeds back into
+// agent chat and content-idea generation.
+//
+// All endpoints live on agent-core.gen.pro (separate base from Rails and
+// gen-agentic). Auth: PAT (X-API-Key).
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "gen_list_watchlists",
+  "Step 3 (Monitoring): List all active watchlists for an agent. Each watchlist contains a name and a list of sources (account/hashtag/keyword) being monitored across platforms. Returns soft-deleted watchlists filtered out.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the watchlists"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentCoreApiCall(
+      "GET",
+      `/agents/${agent_id}/watchlists`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_create_watchlist",
+  "Step 3 (Monitoring): Create a new watchlist for an agent, optionally with initial sources. Idempotent on watchlist name (case-insensitive): if a watchlist with the same name already exists, the provided sources are merged into it instead of creating a duplicate. Each source is (platform, target_type ∈ account|hashtag|keyword, target_value). Returns the full watchlist including all active sources.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().describe("Watchlist display name (1-200 chars). Idempotent: same name reuses the existing watchlist."),
+    sources: z
+      .array(
+        z.object({
+          platform: z.string().describe("Platform — e.g. tiktok, instagram, youtube"),
+          target_type: z.enum(["account", "hashtag", "keyword"]).describe("Source kind"),
+          target_value: z.string().describe("@handle, hashtag (without #), or keyword text"),
+          original_display_value: z.string().optional().describe("Optional human-friendly form (e.g. '#glassskin' or '@drunkelephant') if it differs from target_value"),
+        }),
+      )
+      .optional()
+      .describe("Initial sources to monitor. May be empty; add later with gen_add_watchlist_source."),
+    project_id: z.union([z.string(), z.number()]).optional().describe("Optional Rails project id to link this watchlist to a project shell"),
+    conversation_id: z.string().optional().describe("Optional chat conversation that triggered creation (for attribution)"),
+    created_by_run_id: z.string().optional().describe("Optional agent_run id that triggered creation (for attribution)"),
+  },
+  async ({ agent_id, name, sources, project_id, conversation_id, created_by_run_id }) => {
+    const body: Record<string, unknown> = { name };
+    if (sources !== undefined) body.sources = sources;
+    if (project_id !== undefined) body.project_id = project_id;
+    if (conversation_id !== undefined) body.conversation_id = conversation_id;
+    if (created_by_run_id !== undefined) body.created_by_run_id = created_by_run_id;
+    const data = await agentCoreApiCall(
+      "POST",
+      `/agents/${agent_id}/watchlists`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_get_watchlist",
+  "Step 3 (Monitoring): Fetch a single watchlist by id, including its full active sources list. Returns 404 if the watchlist is soft-deleted.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id (UUID)"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "GET",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_update_watchlist",
+  "Step 3 (Monitoring): Update a watchlist's mutable fields (name, project_id, rails_project_error). Use gen_pause_watchlist or gen_resume_watchlist for status changes; use gen_delete_watchlist to remove. Only the fields you pass are updated.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    name: z.string().optional().describe("New display name"),
+    project_id: z.union([z.string(), z.number()]).optional().describe("New Rails project id to link"),
+    rails_project_error: z.string().optional().describe("Last Rails project sync error, if any"),
+  },
+  async ({ agent_id, watchlist_id, name, project_id, rails_project_error }) => {
+    const body: Record<string, unknown> = {};
+    if (name !== undefined) body.name = name;
+    if (project_id !== undefined) body.project_id = project_id;
+    if (rails_project_error !== undefined) body.rails_project_error = rails_project_error;
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_pause_watchlist",
+  "Step 3 (Monitoring): Pause a watchlist without deleting it. Sets intent_active=false so the scheduler stops queueing scrapes, but the watchlist + its sources are preserved. Use gen_resume_watchlist to re-enable. Use gen_delete_watchlist to permanently remove.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      { intent_active: false },
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_resume_watchlist",
+  "Step 3 (Monitoring): Resume a paused watchlist. Sets intent_active=true so the scheduler resumes queueing scrapes for the watchlist's sources.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "PATCH",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+      { intent_active: true },
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_delete_watchlist",
+  "Step 3 (Monitoring): Soft-delete a watchlist. Marks the watchlist and all its sources as inactive and deleted. The data is retained but no longer returned by gen_list_watchlists or gen_get_watchlist. Use gen_pause_watchlist if you only want to temporarily stop monitoring.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+  },
+  async ({ agent_id, watchlist_id }) => {
+    const data = await agentCoreApiCall(
+      "DELETE",
+      `/agents/${agent_id}/watchlists/${watchlist_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_add_watchlist_source",
+  "Step 3 (Monitoring): Add a monitoring source to an existing watchlist, or restore one that was previously removed. Idempotent on (platform, target_type, target_value) — adding the same source twice returns the existing row. target_type must be one of: account (a username/handle), hashtag (a tag name), or keyword (free text search).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    platform: z.string().describe("Platform — e.g. tiktok, instagram, youtube"),
+    target_type: z.enum(["account", "hashtag", "keyword"]).describe("Source kind: account=@handle, hashtag=tag (no #), keyword=free text"),
+    target_value: z.string().describe("@handle, hashtag name, or keyword text"),
+    original_display_value: z.string().optional().describe("Optional original form (e.g. '#glassskin')"),
+  },
+  async ({ agent_id, watchlist_id, platform, target_type, target_value, original_display_value }) => {
+    const body: Record<string, unknown> = { platform, target_type, target_value };
+    if (original_display_value !== undefined) {
+      body.original_display_value = original_display_value;
+    }
+    const data = await agentCoreApiCall(
+      "POST",
+      `/agents/${agent_id}/watchlists/${watchlist_id}/sources`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_remove_watchlist_source",
+  "Step 3 (Monitoring): Remove a single source from a watchlist. Pass EITHER source_id (preferred when known) OR all three of platform/target_type/target_value to remove by key. Soft-delete: the source row is marked inactive but retained.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id"),
+    source_id: z.string().optional().describe("The source id (preferred). If omitted, all three of platform/target_type/target_value are required."),
+    platform: z.string().optional().describe("Platform (only needed when source_id is omitted)"),
+    target_type: z.enum(["account", "hashtag", "keyword"]).optional().describe("Source kind (only needed when source_id is omitted)"),
+    target_value: z.string().optional().describe("Source value (only needed when source_id is omitted)"),
+  },
+  async ({ agent_id, watchlist_id, source_id, platform, target_type, target_value }) => {
+    if (source_id) {
+      const data = await agentCoreApiCall(
+        "DELETE",
+        `/agents/${agent_id}/watchlists/${watchlist_id}/sources/${source_id}`,
+      );
+      return jsonResult(data);
+    }
+    if (!platform || !target_type || !target_value) {
+      throw new Error(
+        "gen_remove_watchlist_source requires either source_id, or all three of platform/target_type/target_value",
+      );
+    }
+    const query = new URLSearchParams({
+      platform,
+      target_type,
+      target_value,
+    }).toString();
+    const data = await agentCoreApiCall(
+      "DELETE",
+      `/agents/${agent_id}/watchlists/${watchlist_id}/sources?${query}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_query_watchlist",
+  "Step 3 (Monitoring): Ask a question about a watchlist with typed filters (timeframe, count, sort, min engagement rate). Wraps the agent chat path that fans out one DW call per watchlist target with byte-identical filters. Use this for programmatic 'top N from @list:foo by engagement rate in the last 90 days' style asks instead of building a natural-language prompt yourself. Returns a run_id you poll with gen_get_run_status; the final answer contains a video grid plus a natural-language summary.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    watchlist_id: z.string().describe("The watchlist id to query"),
+    question: z.string().describe("What to ask about the watchlist — e.g. 'top hooks', 'top videos', 'what are people saying', 'trending music'. Drives the analysis kind (top_hooks / trend_videos / comment_themes / top_sounds / top_creators / engagement_summary)."),
+    days: z.number().int().min(1).max(365).optional().describe("Time window in days (1-365). When omitted, the chat layer's default policy applies."),
+    limit: z.number().int().min(1).max(1000).optional().describe("How many results to return (1-1000). When omitted, defaults to 100."),
+    sort_by: z.enum(["engagement_rate", "watch_count", "like_count", "comment_count", "share_count", "save_count", "posted_at", "trending_score"]).optional().describe("Sort key. Without it, the backend default ranking applies."),
+    min_engagement_rate: z.number().min(0).max(1).optional().describe("Minimum engagement rate as a 0.0-1.0 fraction (0.05 == 5%)."),
+    return_all: z.boolean().optional().describe("Walk every matching row up to the DW hard cap (1000). Pairs with async pagination downstream. Defaults to false."),
+  },
+  async ({ agent_id, watchlist_id, question, days, limit, sort_by, min_engagement_rate, return_all }) => {
+    // Build a natural-language prompt that the chat-side per-intent
+    // extractor (src/gen/intents/watchlist_analysis.py) parses
+    // deterministically. The chat layer's typed extractor + worker
+    // wiring (GEN-3420) honors every filter byte-identically across
+    // the fan-out; this tool is the programmatic surface over that
+    // contract.
+    const parts: string[] = [];
+    if (limit !== undefined) parts.push(`top ${limit}`);
+    parts.push(question);
+    parts.push(`from @list:${watchlist_id}`);
+    if (sort_by !== undefined) {
+      const sortLabel: Record<string, string> = {
+        engagement_rate: "engagement rate",
+        watch_count: "views",
+        like_count: "likes",
+        comment_count: "comments",
+        share_count: "shares",
+        save_count: "saves",
+        posted_at: "newest",
+        trending_score: "trending",
+      };
+      parts.push(`by ${sortLabel[sort_by]}`);
+    }
+    if (days !== undefined) parts.push(`in the last ${days} days`);
+    if (min_engagement_rate !== undefined) {
+      parts.push(`with engagement rate above ${(min_engagement_rate * 100).toFixed(1)}%`);
+    }
+    if (return_all) parts.push("all results");
+
+    const message = parts.join(" ");
+    const data = await agentApiCall("POST", "/agent/run", {
+      message,
+      agent_id,
+    });
+    return jsonResult(data);
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3 (Monitoring): Recurring Jobs ("Daily Tasks") — gen-agentic
+//
+// A recurring job runs a prompt on a schedule, optionally delivering results
+// via email. Each scheduled run is gated by available credits: a job stays
+// configured even when credits run out, and resumes when credits return.
+//
+// All endpoints live on agent.gen.pro. Auth: PAT (X-API-Key).
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "gen_list_recurring_jobs",
+  "Step 3 (Monitoring): List all non-deleted recurring jobs ('daily tasks') for an agent. Returns active, paused, and inactive jobs sorted newest first. Use gen_pause_recurring_job or gen_delete_recurring_job to change state.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the recurring jobs"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentApiCall(
+      "GET",
+      `/agents/${agent_id}/recurring-jobs`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_create_recurring_job",
+  "Step 3 (Monitoring): Create a recurring agent job ('daily task'). job_type=generate_content_ideas is the most common default. schedule.cadence ∈ {daily, weekly}; pass timezone (e.g. 'UTC' or 'America/Los_Angeles') and time_of_day ('HH:MM' 24h) for predictable firing. For weekly cadence, days_of_week (0=Mon … 6=Sun) is REQUIRED; for daily it must be omitted. delivery.type ∈ {chat_only, email}; when type=email, the email address is REQUIRED. Each scheduled run is credit-gated: the job remains configured if credits run out and resumes when they return.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    name: z.string().optional().describe("Display name. Defaults to the first 80 chars of prompt if omitted."),
+    job_type: z.string().describe("Job type. Default content-ideas pipeline: 'generate_content_ideas'."),
+    prompt: z.string().describe("Natural-language prompt the agent runs each cycle (e.g. 'Generate 5 TikTok content ideas for my skincare brand')"),
+    schedule: z
+      .object({
+        cadence: z.enum(["daily", "weekly"]).describe("How often to run"),
+        timezone: z.string().describe("IANA timezone (e.g. 'UTC', 'America/Los_Angeles')"),
+        time_of_day: z.string().optional().describe("Local clock time as 'HH:MM' (24h). Required for daily/weekly cadences."),
+        days_of_week: z.array(z.number().int().min(0).max(6)).optional().describe("Days to run (0=Mon … 6=Sun). REQUIRED when cadence='weekly'; must be omitted when cadence='daily'. No duplicates."),
+      })
+      .describe("Schedule configuration"),
+    delivery: z
+      .object({
+        type: z.enum(["chat_only", "email"]).describe("chat_only writes results into the conversation; email also sends a templated digest"),
+        email: z.string().optional().describe("Recipient email. REQUIRED when type='email'; must be omitted when type='chat_only'."),
+      })
+      .describe("How results are delivered"),
+    next_run_at: z.string().optional().describe("ISO-8601 timestamp to schedule the first run (defaults to the next slot from cadence)"),
+  },
+  async ({ agent_id, name, job_type, prompt, schedule, delivery, next_run_at }) => {
+    const body: Record<string, unknown> = { job_type, prompt, schedule, delivery };
+    if (name !== undefined) body.name = name;
+    if (next_run_at !== undefined) body.next_run_at = next_run_at;
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_ensure_default_recurring_job",
+  "Step 3 (Monitoring): Idempotently ensure the agent has the default daily content-ideas recurring job. If one already exists for this agent, returns it without changes; otherwise creates it with the standard prompt ('Generate content ideas'), daily cadence at 09:00 UTC, and chat_only delivery. The response 'created' field indicates whether a new job was created (true) or an existing one was returned (false).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+  },
+  async ({ agent_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/defaults`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_get_recurring_job",
+  "Step 3 (Monitoring): Fetch a single recurring job by id. Returns 404 if the job is deleted.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "GET",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_update_recurring_job",
+  "Step 3 (Monitoring): Update a recurring job's mutable fields. Use gen_pause_recurring_job / gen_resume_recurring_job for status transitions instead of patching status directly. Only fields you pass are updated; pass schedule or delivery as full objects (they replace the existing value).",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+    name: z.string().optional().describe("New display name"),
+    prompt: z.string().optional().describe("New prompt the agent will run each cycle"),
+    schedule: z
+      .object({
+        cadence: z.enum(["daily", "weekly"]),
+        timezone: z.string(),
+        time_of_day: z.string().optional(),
+        days_of_week: z.array(z.number().int().min(0).max(6)).optional().describe("Days to run (0=Mon … 6=Sun). REQUIRED when cadence='weekly'; omit when 'daily'."),
+      })
+      .optional()
+      .describe("Replacement schedule object (full replacement)"),
+    delivery: z
+      .object({
+        type: z.enum(["chat_only", "email"]),
+        email: z.string().optional().describe("Recipient email. REQUIRED when type='email'; omit when 'chat_only'."),
+      })
+      .optional()
+      .describe("Replacement delivery object (full replacement)"),
+    next_run_at: z.string().optional().describe("ISO-8601 timestamp to override the next run time"),
+  },
+  async ({ agent_id, job_id, name, prompt, schedule, delivery, next_run_at }) => {
+    const body: Record<string, unknown> = {};
+    if (name !== undefined) body.name = name;
+    if (prompt !== undefined) body.prompt = prompt;
+    if (schedule !== undefined) body.schedule = schedule;
+    if (delivery !== undefined) body.delivery = delivery;
+    if (next_run_at !== undefined) body.next_run_at = next_run_at;
+    const data = await agentApiCall(
+      "PATCH",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_pause_recurring_job",
+  "Step 3 (Monitoring): Pause a recurring job. status → 'paused'. The scheduler stops queueing new runs until gen_resume_recurring_job is called. Does NOT delete the job or its history.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/${job_id}/pause`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_resume_recurring_job",
+  "Step 3 (Monitoring): Resume a paused recurring job. status → 'active'. The scheduler resumes queueing runs at the configured cadence.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "POST",
+      `/agents/${agent_id}/recurring-jobs/${job_id}/resume`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_delete_recurring_job",
+  "Step 3 (Monitoring): Soft-delete a recurring job. status → 'deleted'. The job stops running and no longer appears in gen_list_recurring_jobs. Use gen_pause_recurring_job if you only want to temporarily stop runs. Returns 204 No Content on success.",
+  {
+    agent_id: z.string().describe("The agent ID"),
+    job_id: z.string().describe("The recurring job id"),
+  },
+  async ({ agent_id, job_id }) => {
+    const data = await agentApiCall(
+      "DELETE",
+      `/agents/${agent_id}/recurring-jobs/${job_id}`,
+    );
+    return jsonResult(data);
+  },
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
