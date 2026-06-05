@@ -106,6 +106,7 @@ generations (text/image/video/speech/lipsync/captions).
 - `gen_list_variables`
 - `gen_list_content_resources`, `gen_create_content_resource`, `gen_get_content_resource`, `gen_update_content_resource`, `gen_delete_content_resource`
 - `gen_list_asset_libraries`, `gen_create_direct_upload`
+- `gen_list_proof_of_genesis_backups`, `gen_create_proof_of_genesis_backup`, `gen_remove_proof_of_genesis_backup` — monthly Walrus backup rows include expiry/renewal metadata for Proof of Genesis.
 - **`gen_generate_content`** — the workhorse (all canonical generation types)
 - `gen_generate_layer`, `gen_get_generation`, `gen_stop_generation`, `gen_continue_generation`
 

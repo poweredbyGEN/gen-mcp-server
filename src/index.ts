@@ -501,6 +501,39 @@ Typical flow:
 Scraped results from watchlist sources feed back into agent chat and content
 idea generation; query them through the chat interface, not directly here.
 
+## Proof of Genesis / Backup to Blockchain (\`agent-core.gen.pro\`)
+
+Proof of Genesis backs up GEN assets to Walrus with verifiable hashes and GEN
+credit billing. It is an asset-library primitive: use it for manual backup from
+the assets page and for automatic backup after selected vidsheet events.
+
+Agent Core settings:
+
+- \`proof_of_genesis_enabled\`: master switch.
+- \`proof_of_genesis_auto_backup_sources\`: defaults to \`downloaded\`,
+  \`published\`; \`generated\` and \`uploaded\` are supported opt-in sources.
+- \`proof_of_genesis_auto_backup_asset_types\`: \`video\`, \`image\`.
+
+Privacy rule: Walrus blobs are public by default and blob IDs are not secrets.
+Public assets can be uploaded raw. Private assets must be encrypted before
+upload. Raw private requests are rejected before billing or Walrus work.
+
+Typical flow:
+
+1. \`gen_update_agent_profile\` / \`PATCH /core\` to set the auto-backup
+   preferences above.
+2. \`gen_create_proof_of_genesis_backup\` for manual asset-page backup or
+   eligible asset events. Automatic backup defaults to downloaded/published.
+3. \`gen_list_proof_of_genesis_backups\` to show asset proof status.
+4. \`gen_remove_proof_of_genesis_backup\` to hide a proof row from the default
+   asset view. This does not guarantee deletion from Walrus or Sui.
+
+Successful backups charge the Rails credit operation \`backup_to_blockchain\`
+after Walrus upload and readback verification. Storage is monthly by default:
+Agent Core writes two Walrus epochs (~28 days), tracks \`expires_at\` and
+\`renewal_due_at\`, and renews three days before expiry when credits are
+available.
+
 ## Recurring Jobs / Daily Tasks (\`agent.gen.pro\`)
 
 A **Recurring Job** runs a prompt on a schedule.
@@ -2525,6 +2558,91 @@ server.tool(
       message,
       agent_id,
     });
+    return jsonResult(data);
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 4 (Assets): Proof of Genesis / Backup to Blockchain — agent-core
+//
+// Proof of Genesis backs up GEN assets to Walrus. This surface is for manual
+// asset-page backup and automatic backup events. Automatic backup defaults to
+// downloaded/published vidsheet assets. Storage is monthly by default; rows
+// expose expires_at and renewal_due_at so asset views can show renewal state.
+//
+// Privacy: Walrus blobs are public by default. Do not raw-upload private assets
+// unless the caller has encrypted the bytes first.
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+  "gen_list_proof_of_genesis_backups",
+  "Step 4 (Assets): List Proof of Genesis / Backup to Blockchain rows for an agent. Use this to show which assets have been backed up to Walrus, including monthly expires_at and renewal_due_at fields. Removed rows are hidden by default; include_removed=true returns audit history.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the backups"),
+    include_removed: z.boolean().optional().describe("Include rows removed from the default assets-page view. Defaults to false."),
+  },
+  async ({ agent_id, include_removed }) => {
+    const params = new URLSearchParams();
+    if (include_removed !== undefined) params.set("include_removed", String(include_removed));
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const data = await agentCoreApiCall(
+      "GET",
+      `/agents/${agent_id}/proof-of-genesis/backups${suffix}`,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_create_proof_of_genesis_backup",
+  "Step 4 (Assets): Manually back up a GEN image or video asset to Walrus for the monthly Proof of Genesis storage period, or record an automatic asset event. Automatic backup defaults to downloaded/published assets when enabled. Public assets may be uploaded raw. Private assets must be encrypted before upload because Walrus blobs are public by default. Charges operation backup_to_blockchain with GB-month units after successful upload/readback verification.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the asset"),
+    asset_url: z.string().describe("GEN asset URL to back up. Use assets.gen.pro URLs when available."),
+    asset_type: z.enum(["video", "image"]).default("video").describe("Asset type: video or image."),
+    visibility: z.enum(["private", "public"]).default("private").describe("Asset visibility. Private assets must send encrypted=true and encryption_scheme; raw private requests are rejected before billing or Walrus work."),
+    encrypted: z.boolean().default(false).describe("Whether the bytes at asset_url are already encrypted before Walrus upload. Required for private backups."),
+    encryption_scheme: z.string().optional().describe("Encryption scheme for private backups, e.g. seal/v1."),
+    encryption_key_id: z.string().optional().describe("Optional key policy/version identifier for private proof metadata."),
+    source_event: z.enum(["manual", "generated", "uploaded", "downloaded", "published"]).default("manual").describe("Why this backup is being created."),
+    content_type: z.string().optional().describe("MIME type if known, e.g. video/mp4 or image/png."),
+    idempotency_key: z.string().optional().describe("Stable retry key, e.g. content-resource id plus version, to avoid duplicate upload/billing."),
+    metadata: z.record(z.string(), z.unknown()).optional().describe("Caller metadata such as content_resource_id, vidsheet_id, row_id, project_id, or publish id."),
+  },
+  async ({ agent_id, asset_url, asset_type, visibility, encrypted, encryption_scheme, encryption_key_id, source_event, content_type, idempotency_key, metadata }) => {
+    const body: Record<string, unknown> = {
+      asset_url,
+      asset_type,
+      visibility,
+      encrypted,
+      source_event,
+    };
+    if (encryption_scheme !== undefined) body.encryption_scheme = encryption_scheme;
+    if (encryption_key_id !== undefined) body.encryption_key_id = encryption_key_id;
+    if (content_type !== undefined) body.content_type = content_type;
+    if (idempotency_key !== undefined) body.idempotency_key = idempotency_key;
+    if (metadata !== undefined) body.metadata = metadata;
+    const data = await agentCoreApiCall(
+      "POST",
+      `/agents/${agent_id}/proof-of-genesis/backups`,
+      body,
+    );
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_remove_proof_of_genesis_backup",
+  "Step 4 (Assets): Remove a Proof of Genesis row from the default asset view. This soft-removes the GEN proof record (sets removed_at); it does not guarantee deletion from Walrus or Sui.",
+  {
+    agent_id: z.string().describe("The agent ID that owns the backup"),
+    backup_id: z.number().int().describe("The Proof of Genesis backup id"),
+  },
+  async ({ agent_id, backup_id }) => {
+    const data = await agentCoreApiCall(
+      "DELETE",
+      `/agents/${agent_id}/proof-of-genesis/backups/${backup_id}`,
+    );
     return jsonResult(data);
   },
 );
