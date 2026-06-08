@@ -514,6 +514,12 @@ Agent Core settings:
   \`published\`; \`generated\` and \`uploaded\` are supported opt-in sources.
 - \`proof_of_genesis_auto_backup_asset_types\`: \`video\`, \`image\`.
 
+Ownership rule: when \`owner_sui_address\` is provided, Agent Core asks the GEN
+Walrus publisher to transfer the Walrus object to that Sui wallet
+(\`send_object_to\`). For server-triggered automatic backups, Agent Core can
+resolve the customer's Dynamic Sui wallet for the agent. Response rows expose
+\`custody_mode\` and \`walrus_object_recipient_address\`.
+
 Privacy rule: Walrus blobs are public by default and blob IDs are not secrets.
 Public assets can be uploaded raw. Private assets must be encrypted before
 upload. Raw private requests are rejected before billing or Walrus work.
@@ -2604,12 +2610,13 @@ server.tool(
     encrypted: z.boolean().default(false).describe("Whether the bytes at asset_url are already encrypted before Walrus upload. Required for private backups."),
     encryption_scheme: z.string().optional().describe("Encryption scheme for private backups, e.g. seal/v1."),
     encryption_key_id: z.string().optional().describe("Optional key policy/version identifier for private proof metadata."),
+    owner_sui_address: z.string().optional().describe("Optional customer Sui wallet address that should own the Walrus object. Omit for server-triggered auto-backup when Agent Core resolves the user's Dynamic Sui wallet."),
     source_event: z.enum(["manual", "generated", "uploaded", "downloaded", "published"]).default("manual").describe("Why this backup is being created."),
     content_type: z.string().optional().describe("MIME type if known, e.g. video/mp4 or image/png."),
     idempotency_key: z.string().optional().describe("Stable retry key, e.g. content-resource id plus version, to avoid duplicate upload/billing."),
     metadata: z.record(z.string(), z.unknown()).optional().describe("Caller metadata such as content_resource_id, vidsheet_id, row_id, project_id, or publish id."),
   },
-  async ({ agent_id, asset_url, asset_type, visibility, encrypted, encryption_scheme, encryption_key_id, source_event, content_type, idempotency_key, metadata }) => {
+  async ({ agent_id, asset_url, asset_type, visibility, encrypted, encryption_scheme, encryption_key_id, owner_sui_address, source_event, content_type, idempotency_key, metadata }) => {
     const body: Record<string, unknown> = {
       asset_url,
       asset_type,
@@ -2619,6 +2626,7 @@ server.tool(
     };
     if (encryption_scheme !== undefined) body.encryption_scheme = encryption_scheme;
     if (encryption_key_id !== undefined) body.encryption_key_id = encryption_key_id;
+    if (owner_sui_address !== undefined) body.owner_sui_address = owner_sui_address;
     if (content_type !== undefined) body.content_type = content_type;
     if (idempotency_key !== undefined) body.idempotency_key = idempotency_key;
     if (metadata !== undefined) body.metadata = metadata;
