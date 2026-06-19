@@ -310,7 +310,7 @@ The server maps canonical → internal names automatically:
 | \`video_from_text\` | \`{ prompt, model, aspect_ratio, duration, negative_prompt? }\` | Models: \`veo_3\`, \`veo_3_fast\`, \`veo_3_1\`, \`veo_3_1_fast\`, \`sora_2\`, \`kling_1_6\`, \`seedance_pro\`, \`seedance_pro_1_5\`. Duration 5 or 10. |
 | \`video_from_image\` | \`{ prompt, model, image_resource_id, image_tail_resource_id?, aspect_ratio, duration }\` | Models: \`kling_2_1\`, \`kling_2_6\`, \`veo_3\`, \`veo_3_1\`, \`sora_2\`, \`seedance_lite\`, \`seedance_pro\`, \`seedance_pro_1_5\`. |
 | \`video_from_ingredients\` | \`{ prompt, model, asset_resource_ids, aspect_ratio, duration }\` | Models: \`pika\`, \`kling_1_6\`, \`seedance_lite\`, \`veo_3_1\`, \`veo_3_1_fast\`. |
-| \`speech_from_text\` | \`{ script, voice_method, voice_id?, language?, gender?, enhance_voice?, speed? }\` | \`voice_method\`: \`my_voices\`, \`design_voice\`, \`clone_voice\`. |
+| \`speech_from_text\` | \`{ script, voice_method, voice_id?, language?, gender?, voice_model_provider?, enhance_voice?, speed? }\` | \`voice_method\`: \`my_voices\`, \`design_voice\`, \`clone_voice\`. For design/clone, \`voice_model_provider\` defaults to \`supertonic_3\`; use \`qwen3_voice_design\` for Qwen. |
 | \`lipsync\` | \`{ model, video_resource_id, audio_resource_id }\` | Models: \`sync_so\`, \`gen\`. |
 | \`captions\` | \`{ model, source_resource_id }\` | Model: \`gemini\`. |
 | \`media\` | \`{ content_resource_id }\` | Attach an existing upload to a cell. |
@@ -438,7 +438,8 @@ All canonical names below are accepted; the server maps to internal names.
 ### speech_from_text
 - Canonical: \`speech_from_text\`
 - Voice methods: \`my_voices\`, \`design_voice\`, \`clone_voice\`
-- \`data\`: \`{ script, voice_method, voice_id?, language?, gender?, enhance_voice?, speed? }\`
+- \`data\`: \`{ script, voice_method, voice_id?, language?, gender?, voice_model_provider?, enhance_voice?, speed? }\`
+- \`voice_model_provider\`: optional for \`design_voice\`/\`clone_voice\`, defaults to \`supertonic_3\`; pass \`qwen3_voice_design\` for Qwen.
 
 ### lipsync
 - Canonical: \`lipsync\`
@@ -2167,7 +2168,7 @@ Canonical generation types (legacy names also accepted):
 - VIDEO (text): generation_type="video_from_text", data={prompt:"...", model:"veo_3"|"sora_2"|"kling_1_6"|"seedance_pro"|..., duration:5|10}
 - VIDEO (image): generation_type="video_from_image", data={prompt:"...", model:"kling_2_1"|"veo_3"|..., image_resource_id:123}
 - VIDEO (ingredients): generation_type="video_from_ingredients", data={prompt:"...", model:"pika"|..., asset_resource_ids:[...]}
-- SPEECH: generation_type="speech_from_text", data={voice_id:"...", script:"...", voice_method:"my_voices"|"design_voice"|"clone_voice"}
+- SPEECH: generation_type="speech_from_text", data={voice_id:"...", script:"...", voice_method:"my_voices"|"design_voice"|"clone_voice", voice_model_provider?:"supertonic_3"|"qwen3_voice_design"}
 - LIPSYNC: generation_type="lipsync", data={model:"sync_so"|"gen", video_resource_id:123, audio_resource_id:456}
 - CAPTIONS: generation_type="captions", data={model:"gemini", source_resource_id:123}
 - MEDIA: generation_type="media", data={content_resource_id:123}
