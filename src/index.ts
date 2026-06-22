@@ -178,6 +178,7 @@ content API). Tools that hit it live under "Agent Ideas" below.
 | \`gen_decide_agent_run\` | Approve or reject a pending action gate on a run. |
 | \`gen_update_idea_status\` | Promote an idea: generated → approve_to_create → ready_for_review → approved_to_post → posted. |
 | \`gen_run_research\` | Standalone research on any topic. Use for trend hunts before generating ideas. |
+| \`gen_create_song_mix\` | Public API contract for combining multiple songs into one long DJ-style audio mix. Returns \`pending_engine\` until the Mixxx-compatible renderer worker is installed. |
 | \`gen_create_monitoring_job\` | Schedule ongoing scrapes of a hashtag/creator/keyword — the data feeds back into future idea generation. |
 | \`gen_list_conversations\` / \`gen_get_conversation\` | Review chat history before refining. |
 
@@ -1524,6 +1525,50 @@ server.tool(
   },
   async ({ idea_id, status }) => {
     const data = await agentApiCall("PUT", `/agent/ideas/${idea_id}/status/${status}`);
+    return jsonResult(data);
+  }
+);
+
+server.tool(
+  "gen_create_song_mix",
+  "Public API (agent.gen.pro): Create a DJ-style song-mix job that combines multiple songs/tracks into one long audio output. Use for 'mix these 5 songs', 'combine these tracks into one long song', or 'create 5 songs and combine them'. Returns status=pending_engine until the Mixxx-compatible renderer worker is installed, or pending_song_generation when songs must be generated first.",
+  {
+    tracks: z.array(z.object({
+      title: z.string().optional().describe("Song title, if known"),
+      artist: z.string().optional().describe("Artist name, if known"),
+      url: z.string().optional().describe("Direct audio URL"),
+      asset_id: z.string().optional().describe("GEN asset/content-resource id"),
+      bpm: z.number().optional().describe("BPM if known"),
+      key: z.string().optional().describe("Musical key if known"),
+      mood: z.string().optional().describe("Mood if known"),
+    })).optional().describe("Existing song/audio inputs. Provide at least two unless generate_missing_count is set."),
+    prompt: z.string().optional().describe("Custom DJ mix prompt. Omit to use the default optimal-order BPM/key/mood prompt."),
+    transition_style: z.string().optional().describe("Transition style, e.g. professional, smooth, high-energy."),
+    output_format: z.enum(["mp3", "wav"]).optional().describe("Final audio format. Defaults to mp3."),
+    auto_order: z.boolean().optional().describe("Whether GEN should choose optimal order by BPM/key/mood. Defaults true."),
+    desired_duration_seconds: z.number().optional().describe("Desired final mix duration in seconds."),
+    generate_missing_count: z.number().optional().describe("Number of songs to create before mixing, e.g. 5 for 'create 5 songs and combine them'."),
+  },
+  async ({
+    tracks,
+    prompt,
+    transition_style,
+    output_format,
+    auto_order,
+    desired_duration_seconds,
+    generate_missing_count,
+  }) => {
+    const body: Record<string, unknown> = {};
+    if (tracks !== undefined) body.tracks = tracks;
+    if (prompt !== undefined) body.prompt = prompt;
+    if (transition_style !== undefined) body.transition_style = transition_style;
+    if (output_format !== undefined) body.output_format = output_format;
+    if (auto_order !== undefined) body.auto_order = auto_order;
+    if (desired_duration_seconds !== undefined) {
+      body.desired_duration_seconds = desired_duration_seconds;
+    }
+    if (generate_missing_count !== undefined) body.generate_missing_count = generate_missing_count;
+    const data = await agentApiCall("POST", "/audio/mixes", body);
     return jsonResult(data);
   }
 );
