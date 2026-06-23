@@ -170,6 +170,8 @@ content API). Tools that hit it live under "Agent Ideas" below.
 
 | Tool | When to use |
 |---|---|
+| \`gen_ask\` | General chat front door for questions, analysis, and pasted social/video links. |
+| \`gen_chat\` | Continue a conversation or run a build/compose request through chat. |
 | \`gen_generate_content_ideas\` | **Starting point.** Generates N video ideas for an agent. Returns a \`run_id\` — poll with \`gen_get_run_status\`. |
 | \`gen_get_run_status\` | Poll every 5s until \`completed\`. Ideas arrive in the messages array. |
 | \`gen_list_content_ideas\` | List all ideas for the agent (across runs). Filter by status. |
@@ -1423,6 +1425,50 @@ server.tool(
 //
 // Most tools in this step call agent.gen.pro (not api.gen.pro).
 // ═════════════════════════════════════════════════════════════════════════════
+
+server.tool(
+  "gen_ask",
+  "Step 2 (Agent Chat): General question/analysis front door. Use this for arbitrary agent chat, research questions, pasted TikTok/Instagram/YouTube/video links, comparisons, and 'what happened here?' debugging. Pasted video/social links belong in message text; gen-agentic imports up to 30 links, attaches the fetched media/transcripts to the conversation, bills the media import/analysis, and routes multimodal context to Gemini when available. Returns a run_id — poll with gen_get_run_status.",
+  {
+    agent_id: z.string().describe("The agent ID to chat with"),
+    message: z.string().describe("Natural language request. Include pasted video/social URLs directly in this text."),
+    conversation_id: z.string().optional().describe("Optional existing conversation to continue"),
+    auto_confirm: z.boolean().optional().describe("Skip clarifying questions when the request is explicit"),
+  },
+  async ({ agent_id, message, conversation_id, auto_confirm }) => {
+    const body: Record<string, unknown> = {
+      message,
+      agent_id,
+      metadata: { source: "mcp", tool: "gen_ask" },
+    };
+    if (conversation_id) body.conversation_id = conversation_id;
+    if (auto_confirm !== undefined) body.auto_confirm = auto_confirm;
+    const data = await agentApiCall("POST", "/agent/run", body);
+    return jsonResult(data);
+  },
+);
+
+server.tool(
+  "gen_chat",
+  "Step 2 (Agent Chat): Continue or create an agent conversation for build/compose workflows. Use when the user wants GEN to do work through the normal chat planner, including multi-step requests like 'analyze these links and email me'. Put pasted video/social URLs directly in message text; the chat backend imports up to 30 links as conversation media context. Returns a run_id — poll with gen_get_run_status.",
+  {
+    agent_id: z.string().describe("The agent ID to chat with"),
+    message: z.string().describe("Natural language request. Include pasted video/social URLs directly in this text."),
+    conversation_id: z.string().optional().describe("Optional existing conversation to continue"),
+    auto_confirm: z.boolean().optional().describe("Skip clarifying questions when the request is explicit"),
+  },
+  async ({ agent_id, message, conversation_id, auto_confirm }) => {
+    const body: Record<string, unknown> = {
+      message,
+      agent_id,
+      metadata: { source: "mcp", tool: "gen_chat" },
+    };
+    if (conversation_id) body.conversation_id = conversation_id;
+    if (auto_confirm !== undefined) body.auto_confirm = auto_confirm;
+    const data = await agentApiCall("POST", "/agent/run", body);
+    return jsonResult(data);
+  },
+);
 
 server.tool(
   "gen_generate_content_ideas",
