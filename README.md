@@ -9,24 +9,29 @@ follows, from onboarding an agent to publishing a video. Tool descriptions
 start with the step name (e.g. "Step 4 (Edit & Generate): …") so AI tooling
 can route quickly.
 
-## Install
+The server runs in **two modes** from one codebase:
+
+- **Local (stdio)** — for desktop/CLI MCP clients that launch a local process:
+  Claude Code, Cursor, VS Code, Claude Desktop. Authenticates with the
+  `GEN_API_KEY` env var.
+- **Hosted (Streamable HTTP)** — for cloud agents that connect to a URL:
+  **Manus** custom MCP, claude.ai connectors, ChatGPT. Multi-tenant — each
+  caller sends their own PAT as `Authorization: Bearer <gen_PAT>`, served at
+  `https://mcp.gen.pro/mcp`.
+
+## Install (local / stdio)
 
 ```bash
-npm install -g @poweredbygen/gen-mcp-server
+# via uv (recommended)
+uvx gen-mcp-server
+# or pip
+pip install gen-mcp-server && gen-mcp-server
 ```
 
-Or run directly with npx:
+## Configure Claude Code (local)
 
 ```bash
-npx @poweredbygen/gen-mcp-server
-```
-
-## Configure Claude Code
-
-Add the MCP server:
-
-```bash
-claude mcp add gen -- npx @poweredbygen/gen-mcp-server
+claude mcp add gen -- uvx gen-mcp-server
 ```
 
 Set your API key (Personal Access Token from https://gen.pro — log in, pick
@@ -41,6 +46,22 @@ Optional base-URL overrides:
 ```bash
 export GEN_API_BASE_URL=https://api.gen.pro/v1
 export GEN_AGENT_API_URL=https://agent.gen.pro/v1
+export GEN_AGENT_CORE_API_URL=https://agent-core.gen.pro/v1
+```
+
+## Use the hosted server (Manus / claude.ai / ChatGPT)
+
+No install — point the agent at the hosted endpoint and authenticate with
+your GEN PAT as a bearer token.
+
+**Manus:** Settings → Integrations → Custom MCP Servers → Add Server
+- **Server URL:** `https://mcp.gen.pro/mcp`
+- **Authentication:** Bearer token → your `gen_…` PAT
+
+**Self-host the HTTP transport:**
+
+```bash
+GEN_MCP_PORT=8080 gen-mcp-server --http   # serves streamable-http on :8080/mcp
 ```
 
 ## The 5-Step Journey
