@@ -1,0 +1,26 @@
+[project]
+name = "gen-mcp-server"
+version = "0.9.0"
+description = "GEN MCP server — Auto Content Engine + Agent Core. Runs local (stdio) or hosted (streamable-http)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["mcp", "gen", "gen-pro", "claude", "ai", "model-context-protocol"]
+dependencies = [
+    "fastmcp>=2.3.0",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://gen.pro"
+Repository = "https://github.com/poweredbyGEN/gen-mcp-server"
+
+[project.scripts]
+gen-mcp-server = "gen_mcp_server.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gen_mcp_server"]

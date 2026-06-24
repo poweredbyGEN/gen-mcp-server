@@ -11,3 +11,8 @@ CLAUDE.md
 graphify-out/
 src/graphify-out/
 
+
+.venv/
+__pycache__/
+*.egg-info/
+dist/
