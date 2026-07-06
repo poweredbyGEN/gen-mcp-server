@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Collection
 from typing import Any
 
 import httpx
@@ -70,7 +71,13 @@ def _resolve_pat() -> str:
     return pat
 
 
-async def _call(base: str, method: str, path: str, body: Any | None = None) -> Any:
+async def _call(
+    base: str,
+    method: str,
+    path: str,
+    body: Any | None = None,
+    accepted_statuses: Collection[int] | None = None,
+) -> Any:
     pat = _resolve_pat()
     url = f"{base}{path}"
     async with httpx.AsyncClient(timeout=120.0) as http:
@@ -89,15 +96,21 @@ async def _call(base: str, method: str, path: str, body: Any | None = None) -> A
         data: Any = json.loads(text)
     except json.JSONDecodeError:
         data = {"raw": text}
-    if not res.is_success:
+    accepted_statuses = accepted_statuses or ()
+    if not res.is_success and res.status_code not in accepted_statuses:
         # Same shape as TS: "API error <status>: <json>"
         raise GenApiError(f"API error {res.status_code}: {json.dumps(data)}")
     return data
 
 
-async def api_call(method: str, path: str, body: Any | None = None) -> Any:
+async def api_call(
+    method: str,
+    path: str,
+    body: Any | None = None,
+    accepted_statuses: Collection[int] | None = None,
+) -> Any:
     """Rails content engine — api.gen.pro/v1."""
-    return await _call(BASE_URL, method, path, body)
+    return await _call(BASE_URL, method, path, body, accepted_statuses=accepted_statuses)
 
 
 async def form_call(method: str, path: str, form: dict[str, str]) -> Any:

@@ -61,6 +61,51 @@ async def gen_get_organization(
     data = await api_call("GET", f"/organizations/{organization_id}")
     return json_result(data)
 
+@mcp.tool(name="gen_buy_credits", description="Billing: Start a Stripe checkout for buying one-time workspace credits. Subscriptions stay Stripe-only; one-time credits can use Stripe through this tool or x402 through gen_quote_x402_credits.")
+async def gen_buy_credits(
+    workspace_id: Annotated[str, Field(description="Workspace/organization ID to receive the credits")],
+    credit_plan_id: Annotated[str, Field(description="One-time credit plan ID to buy")],
+    success_url: Annotated[str, Field(description="HTTPS URL Stripe should return to after successful payment")],
+    cancel_url: Annotated[str, Field(description="HTTPS URL Stripe should return to after cancellation")],
+) -> str:
+    data = await api_call("POST", "/payment", {
+        "organization_id": workspace_id,
+        "credit_plan_id": credit_plan_id,
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+    })
+    return json_result(data)
+
+@mcp.tool(name="gen_quote_x402_credits", description="Billing: Create a machine-readable x402 payment quote for buying one-time workspace credits. Requires workspace_id; subscriptions are not supported through x402.")
+async def gen_quote_x402_credits(
+    workspace_id: Annotated[str, Field(description="Workspace/organization ID to receive the credits")],
+    credit_plan_id: Annotated[str, Field(description="One-time credit plan ID to buy")],
+    network: Annotated[str, Field(default="base", description="Payment network: base, solana, or sui")] = "base",
+) -> str:
+    data = await api_call("POST", "/x402_credit_purchase", {
+        "workspace_id": workspace_id,
+        "credit_plan_id": credit_plan_id,
+        "network": network,
+    }, accepted_statuses={402})
+    return json_result(data)
+
+@mcp.tool(name="gen_settle_x402_credits", description="Billing: Settle a completed x402 credit payment and credit the GEN workspace ledger exactly once.")
+async def gen_settle_x402_credits(
+    workspace_id: Annotated[str, Field(description="Workspace/organization ID from the x402 quote")],
+    checkout_session_id: Annotated[str, Field(description="checkoutSessionId returned by gen_quote_x402_credits")],
+    network: Annotated[str, Field(description="Payment network used for the transfer: base, solana, or sui")],
+    transaction_id: Annotated[str, Field(description="On-chain transaction signature/hash")],
+    payment_payload: Annotated[Optional[dict], Field(default=None, description="Optional x402/facilitator payload from the paying wallet/client")] = None,
+) -> str:
+    data = await api_call("POST", "/x402_credit_purchase/settle", {
+        "workspace_id": workspace_id,
+        "checkout_session_id": checkout_session_id,
+        "network": network,
+        "transaction_id": transaction_id,
+        "payment_payload": payment_payload or {},
+    }, accepted_statuses={402})
+    return json_result(data)
+
 @mcp.tool(name="gen_update_organization", description="Step 1 (Agent Setup): Update an organization's name (requires owner or manager role).")
 async def gen_update_organization(
     organization_id: Annotated[str, Field(description="The organization ID to update")],
