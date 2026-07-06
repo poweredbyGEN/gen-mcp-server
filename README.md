@@ -77,6 +77,18 @@ Read `gen://api-reference` (an MCP resource exposed by this server) for the
 full teaching document — it walks through each step with narrative, top
 tools, and chained curl examples.
 
+## Payments
+
+GEN workspaces spend credits. Subscriptions are Stripe-only. One-time credit
+purchases support either Stripe checkout or x402 payment quotes.
+
+- `gen_buy_credits` starts a Stripe checkout for a one-time credit plan.
+- `gen_quote_x402_credits` returns a machine-readable 402 quote. Use
+  `base-sepolia`, `solana-devnet`, or `sui-testnet` in staging; use `base`,
+  `solana`, or `sui` only in production.
+- `gen_settle_x402_credits` settles the on-chain payment into the workspace
+  credit ledger once.
+
 ## Available Tools
 
 ### Step 1 — Set Up Your Agent
@@ -95,6 +107,7 @@ API keys.
 - Voice design flow: `gen_generate_voice_script` → `gen_generate_voice_description` → `gen_generate_voice_samples` → `gen_design_voice`
 - `gen_clone_voice`, `gen_preview_voice`, `gen_get_voice_preview_status`, `gen_delete_voice`
 - `gen_list_api_keys`, `gen_create_api_key`, `gen_revoke_api_key`
+- Payments: `gen_buy_credits`, `gen_quote_x402_credits`, `gen_settle_x402_credits`
 
 ### Step 2 — Generate Content Ideas
 
