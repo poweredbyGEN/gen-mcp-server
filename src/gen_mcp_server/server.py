@@ -80,7 +80,7 @@ async def gen_buy_credits(
 async def gen_quote_x402_credits(
     workspace_id: Annotated[str, Field(description="Workspace/organization ID to receive the credits")],
     credit_plan_id: Annotated[str, Field(description="One-time credit plan ID to buy")],
-    network: Annotated[str, Field(default="base", description="Payment network: base, solana, or sui")] = "base",
+    network: Annotated[str, Field(default="base-sepolia", description="Payment network. Staging/testnet: base-sepolia, solana-devnet, sui-testnet. Production: base, solana, sui.")] = "base-sepolia",
 ) -> str:
     data = await api_call("POST", "/x402_credit_purchase", {
         "workspace_id": workspace_id,
@@ -93,7 +93,7 @@ async def gen_quote_x402_credits(
 async def gen_settle_x402_credits(
     workspace_id: Annotated[str, Field(description="Workspace/organization ID from the x402 quote")],
     checkout_session_id: Annotated[str, Field(description="checkoutSessionId returned by gen_quote_x402_credits")],
-    network: Annotated[str, Field(description="Payment network used for the transfer: base, solana, or sui")],
+    network: Annotated[str, Field(description="Payment network used for the transfer. Staging/testnet: base-sepolia, solana-devnet, sui-testnet. Production: base, solana, sui.")],
     transaction_id: Annotated[str, Field(description="On-chain transaction signature/hash")],
     payment_payload: Annotated[Optional[dict], Field(default=None, description="Optional x402/facilitator payload from the paying wallet/client")] = None,
 ) -> str:

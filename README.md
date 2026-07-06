@@ -83,8 +83,9 @@ GEN workspaces spend credits. Subscriptions are Stripe-only. One-time credit
 purchases support either Stripe checkout or x402 payment quotes.
 
 - `gen_buy_credits` starts a Stripe checkout for a one-time credit plan.
-- `gen_quote_x402_credits` returns a machine-readable 402 quote for Base,
-  Solana, or Sui.
+- `gen_quote_x402_credits` returns a machine-readable 402 quote. Use
+  `base-sepolia`, `solana-devnet`, or `sui-testnet` in staging; use `base`,
+  `solana`, or `sui` only in production.
 - `gen_settle_x402_credits` settles the on-chain payment into the workspace
   credit ledger once.
 
