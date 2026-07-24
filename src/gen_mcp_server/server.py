@@ -149,6 +149,22 @@ async def gen_delete_agent_avatar(
     data = await api_call("DELETE", f"/agents/{agent_id}/avatars/{avatar_id}")
     return json_result(data)
 
+@mcp.tool(name="gen_add_agent_look", description="Step 1 (Agent Setup): Attach an uploaded image as an additional look (non-primary) on the agent. Use after gen_create_direct_upload + PUT-ing the file bytes to the returned upload URL: pass the direct-upload response's signed_id here. Existing primary avatar is preserved. Use gen_set_agent_primary_photo when the image should become the primary photo.")
+async def gen_add_agent_look(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    signed_id: Annotated[str, Field(description="The signed_id returned from gen_create_direct_upload after uploading the image")],
+) -> str:
+    data = await api_call("POST", f"/agents/{agent_id}/avatars", {"agent_avatars_attributes": [{"file": signed_id}]})
+    return json_result(data)
+
+@mcp.tool(name="gen_set_agent_primary_photo", description="Step 1 (Agent Setup): Attach an uploaded image and set it as the agent's PRIMARY photo (replacing any existing primary). Use after gen_create_direct_upload + PUT-ing the file bytes to the returned upload URL: pass the direct-upload response's signed_id here. The agent's primary_avatar_url updates immediately. To add as a non-primary look instead, use gen_add_agent_look.")
+async def gen_set_agent_primary_photo(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    signed_id: Annotated[str, Field(description="The signed_id returned from gen_create_direct_upload after uploading the image")],
+) -> str:
+    data = await api_call("PATCH", f"/agents/{agent_id}", {"agent": {"agent_avatars_attributes": [{"file": signed_id, "is_primary": True}]}})
+    return json_result(data)
+
 @mcp.tool(name="gen_get_agent_core", description="Step 1 (Agent Setup): STAR READ TOOL. Returns all agent setup sections in one call: identity (name + profile photo), overview (brand name, description, identity type, goal, keywords, target platforms), personality, inspiration sources, voice, look (description + reference images), and accounts (the agent's own socials). Always call before gen_update_agent_core.")
 async def gen_get_agent_core(
     agent_id: Annotated[str, Field(description="The agent ID")],
