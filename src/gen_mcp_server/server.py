@@ -13,7 +13,7 @@ from .client import api_call, agent_api_call, agent_core_api_call, form_call, in
 from .generation_types import resolve_generation_type
 from .reference import API_REFERENCE
 
-mcp = FastMCP(name="gen", version="0.9.0")
+mcp = FastMCP(name="gen", version="0.9.1")
 
 
 @mcp.resource("gen://api-reference", mime_type="text/markdown")
@@ -893,7 +893,7 @@ async def gen_create_direct_upload(
     data = await api_call("POST", "/direct_upload", {"blob": {"filename": filename, "byte_size": byte_size, "checksum": checksum, "content_type": content_type}})
     return json_result(data)
 
-@mcp.tool(name="gen_generate_content", description="Step 4 (Edit & Generate): THE WORKHORSE. Trigger AI content generation for a cell. Returns a generation_id — poll with gen_get_generation until status is \"completed\".  Canonical generation types (legacy names also accepted): - TEXT: generation_type=\"text\", data={model:\"gemini_2_0_flash\"|\"gpt_4o\"|..., prompt:\"...\"} - IMAGE: generation_type=\"image_from_text\", data={prompt:\"...\", model:\"gemini_image\"|\"gemini_pro_image\"|\"midjourney\", aspect_ratio:\"1:1\"|\"9:16\"|\"16:9\"} - VIDEO (text): generation_type=\"video_from_text\", data={prompt:\"...\", model:\"veo_3\"|\"sora_2\"|\"kling_1_6\"|\"seedance_pro\"|..., duration:5|10} - VIDEO (image): generation_type=\"video_from_image\", data={prompt:\"...\", model:\"kling_2_1\"|\"veo_3\"|..., image_resource_id:123} - VIDEO (ingredients): generation_type=\"video_from_ingredients\", data={prompt:\"...\", model:\"pika\"|..., asset_resource_ids:[...]} - SPEECH: generation_type=\"speech_from_text\", data={voice_id:\"...\", script:\"...\", voice_method:\"my_voices\"|\"design_voice\"|\"clone_voice\", voice_model_provider?:\"supertonic_3\"|\"qwen3_voice_design\"} - LIPSYNC: generation_type=\"lipsync\", data={model:\"sync_so\"|\"gen\", video_resource_id:123, audio_resource_id:456} - CAPTIONS: generation_type=\"captions\", data={model:\"gemini\", source_resource_id:123} - MEDIA: generation_type=\"media\", data={content_resource_id:123}  Credits are pre-charged and refunded on failure/stop.")
+@mcp.tool(name="gen_generate_content", description="Step 4 (Edit & Generate): THE WORKHORSE. Trigger AI content generation for a cell. Returns a generation_id — poll with gen_get_generation until status is \"completed\".  Canonical generation types (legacy names also accepted): - TEXT: generation_type=\"text\", data={model:\"gemini_2_0_flash\"|\"gpt_4o\"|..., prompt:\"...\"} - IMAGE: generation_type=\"image_from_text\", data={prompt:\"...\", model:\"gemini_image\"|\"gemini_pro_image\"|\"midjourney\"|\"grok\", aspect_ratio:\"1:1\"|\"9:16\"|\"16:9\"} - VIDEO (text): generation_type=\"video_from_text\", data={prompt:\"...\", model:\"veo_3\"|\"veo_3_1\"|\"sora_2\"|\"kling_1_6\"|\"kling_2_1\"|\"kling_2_6\"|\"seedance_pro\"|\"seedance-2.0\"|\"grok\"|..., duration:5|10} - VIDEO (image): generation_type=\"video_from_image\", data={prompt:\"...\", model:\"kling_2_1\"|\"kling_2_6\"|\"veo_3\"|\"veo_3_1\"|\"seedance-2.0\"|\"grok\"|..., image_resource_id:123} - VIDEO (ingredients): generation_type=\"video_from_ingredients\", data={prompt:\"...\", model:\"pika\"|\"kling_1_6\"|\"grok\"|..., asset_resource_ids:[...]} - SPEECH: generation_type=\"speech_from_text\", data={voice_id:\"...\", script:\"...\", voice_method:\"my_voices\"|\"design_voice\"|\"clone_voice\", voice_model_provider?:\"supertonic_3\"|\"qwen3_voice_design\"} - LIPSYNC: generation_type=\"lipsync\", data={model:\"sync_so\"|\"gen\", video_resource_id:123, audio_resource_id:456} - CAPTIONS: generation_type=\"captions\", data={model:\"gemini\", source_resource_id:123} - MEDIA: generation_type=\"media\", data={content_resource_id:123}  Credits are pre-charged and refunded on failure/stop.")
 async def gen_generate_content(
     engine_id: Annotated[str, Field(description="The engine ID")],
     cell_id: Annotated[str, Field(description="The cell ID to generate content for")],
@@ -980,6 +980,102 @@ async def gen_publish_content(
         publish_data["timezone_offset"] = timezone_offset
     body = {"user_job_type": "publish_content", "data": _json.dumps(publish_data)}
     data = await api_call("POST", f"/user_jobs?agent_id={agent_id}", body)
+    return json_result(data)
+
+@mcp.tool(name="gen_get_social_connect_url", description="Step 5 (Export & Publish): Get the OAuth URL the user must open in a browser to connect a social account to their agent. Platforms: tiktok, instagram, facebook, youtube, x. NEVER ask the user for credentials directly — always use this OAuth flow. The returned URL is single-use and expires.")
+async def gen_get_social_connect_url(
+    agent_id: Annotated[str, Field(description="The agent ID to connect the social account to")],
+    platform: Annotated[str, Field(description="Platform to connect: tiktok | instagram | facebook | youtube | x")],
+) -> str:
+    data = await integration_api_call("GET", f"/platform/get_authorization_url?agent_id={agent_id}&platform={platform}")
+    return json_result(data)
+
+@mcp.tool(name="gen_list_connected_socials", description="Step 5 (Export & Publish): List social accounts currently connected to an agent. Returns platform, username, and connection status. Use before gen_schedule_post to confirm the target platform is connected.")
+async def gen_list_connected_socials(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+) -> str:
+    data = await integration_api_call("GET", f"/platform/get_oauth_account?agent_id={agent_id}")
+    return json_result(data)
+
+@mcp.tool(name="gen_disconnect_social", description="Step 5 (Export & Publish): Disconnect a connected social account from an agent. Platforms: tiktok, instagram, facebook, youtube, x. Use when the user wants to unlink a platform.")
+async def gen_disconnect_social(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    platform: Annotated[str, Field(description="Platform to disconnect: tiktok | instagram | facebook | youtube | x")],
+) -> str:
+    data = await integration_api_call("PUT", f"/platform/disconnect/{platform}", {"agent_id": agent_id})
+    return json_result(data)
+
+@mcp.tool(name="gen_list_scheduled_posts", description="Step 5 (Export & Publish): List the content calendar — scheduled posts for an agent. Optional date range filters (start_date/end_date as ISO 8601). Returns an empty list when the agent has no scheduled posts.")
+async def gen_list_scheduled_posts(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    start_date: Annotated[Optional[str], Field(default=None, description="Optional ISO 8601 start date filter (e.g. 2026-01-01)")] = None,
+    end_date: Annotated[Optional[str], Field(default=None, description="Optional ISO 8601 end date filter (e.g. 2026-12-31)")] = None,
+) -> str:
+    params = f"agent_id={agent_id}"
+    if start_date:
+        params += f"&start_date={start_date}"
+    if end_date:
+        params += f"&end_date={end_date}"
+    data = await integration_api_call("GET", f"/schedule/posts?{params}")
+    return json_result(data)
+
+@mcp.tool(name="gen_schedule_post", description="Step 5 (Export & Publish): Schedule or immediately post content to a social platform. Platforms: tiktok | instagram | facebook | youtube | x. Use schedule_type='now' for immediate posting, 'specific_time' with scheduled_time (ISO 8601) for a calendar slot. Pass media_url for a single video, media_urls for images. Use gen_list_connected_socials first to confirm the platform is connected.")
+async def gen_schedule_post(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    platform: Annotated[str, Field(description="Target platform: tiktok | instagram | facebook | youtube | x")],
+    schedule_type: Annotated[str, Field(description="'now' for immediate posting, 'specific_time' for scheduled (requires scheduled_time)")] = "now",
+    description: Annotated[Optional[str], Field(default=None, description="Post caption/description. Include hashtags inline.")] = None,
+    media_url: Annotated[Optional[str], Field(default=None, description="Public URL to a single video file")] = None,
+    media_urls: Annotated[Optional[list], Field(default=None, description="List of public image URLs (for image posts, up to 4 for X)")] = None,
+    title: Annotated[Optional[str], Field(default=None, description="Post title (YouTube)")] = None,
+    media_type: Annotated[Optional[str], Field(default=None, description="Media type: VIDEO | IMAGE | TWEET_VIDEO (default VIDEO)")] = None,
+    scheduled_time: Annotated[Optional[str], Field(default=None, description="ISO 8601 datetime for scheduled posts (required when schedule_type is 'specific_time')")] = None,
+    thumbnail_url: Annotated[Optional[str], Field(default=None, description="Custom thumbnail URL")] = None,
+    timezone_offset: Annotated[Optional[float], Field(default=None, description="Local UTC offset in hours (e.g. -7 for PDT). Omit to use agent's configured timezone.")] = None,
+) -> str:
+    body: dict = {
+        "agent_id": agent_id,
+        "platform": [platform],
+        "schedule_type": schedule_type,
+        "media_type": media_type or "VIDEO",
+    }
+    if description is not None:
+        body["description"] = description
+    if media_url is not None:
+        body["media_url"] = media_url
+    if media_urls is not None:
+        body["media_urls"] = media_urls
+    if title is not None:
+        body["title"] = title
+    if scheduled_time is not None:
+        body["scheduled_time"] = scheduled_time
+    if thumbnail_url is not None:
+        body["thumbnail_url"] = thumbnail_url
+    if timezone_offset is not None:
+        body["timezone_offset"] = timezone_offset
+    data = await integration_api_call("POST", "/schedule/with-post", body)
+    return json_result(data)
+
+@mcp.tool(name="gen_get_post_status", description="Step 5 (Export & Publish): Check whether a post actually went out. Returns the platform-confirmed publish status (not just 'queued'). Overall status: accepted → publishing → published | failed. Each platform entry has status, platform_post_id, post_url, published_at, and error (when failed).")
+async def gen_get_post_status(
+    post_id: Annotated[str, Field(description="The post ID returned by gen_schedule_post")],
+) -> str:
+    data = await integration_api_call("GET", f"/schedule/post/{post_id}")
+    return json_result(data)
+
+@mcp.tool(name="gen_update_scheduled_post", description="Step 5 (Export & Publish): Update a scheduled post (time, description, media, etc.) before it goes out. Only works on posts that have not yet been published. Pass only the fields you want to change.")
+async def gen_update_scheduled_post(
+    post_id: Annotated[str, Field(description="The post ID to update")],
+    fields: Annotated[dict, Field(description="Fields to update (description, scheduled_time, media_url, etc.)")],
+) -> str:
+    data = await integration_api_call("PATCH", f"/schedule/post/{post_id}", fields)
+    return json_result(data)
+
+@mcp.tool(name="gen_delete_scheduled_post", description="Step 5 (Export & Publish): Delete a scheduled post from the content calendar. Only works before the post goes out.")
+async def gen_delete_scheduled_post(
+    post_id: Annotated[str, Field(description="The post ID to delete")],
+) -> str:
+    data = await integration_api_call("DELETE", f"/schedule/post/{post_id}")
     return json_result(data)
 
 @mcp.tool(name="gen_list_watchlists", description="Step 3 (Monitoring): List all active watchlists for an agent. Each watchlist contains a name and a list of sources (account/hashtag/keyword) being monitored across platforms. Returns soft-deleted watchlists filtered out.")

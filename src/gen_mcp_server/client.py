@@ -4,6 +4,7 @@ The TS server sent the PAT as `X-API-Key` to three backends:
   - api.gen.pro/v1         (Rails — content engine, agents, orgs, vidsheet, ...)
   - agent.gen.pro/v1       (gen-agentic — chat, ideas, research, conversations)
   - agent-core.gen.pro/v1  (agent-core — watchlists, agent core/profile)
+  - python.gen.pro         (social OAuth + schedule — connect/disconnect/post calendar)
 
 We preserve that exactly. The only change for hosted mode is WHERE the PAT
 comes from:
@@ -140,30 +141,9 @@ async def agent_core_api_call(method: str, path: str, body: Any | None = None) -
     return await _call(AGENT_CORE_API_BASE, method, path, body)
 
 
-async def integration_api_call(method: str, path: str, body: Any | None = None, params: dict | None = None) -> Any:
-    """Social-publishing integration service — python.gen.pro (OAuth + posting + schedule)."""
-    pat = _resolve_pat()
-    url = f"{INTEGRATION_BASE}{path}"
-    async with httpx.AsyncClient(timeout=120.0) as http:
-        res = await http.request(
-            method,
-            url,
-            headers={
-                "X-API-Key": pat,
-                "Content-Type": "application/json",
-                "X-Client": "gen-mcp-server",
-            },
-            content=json.dumps(body) if body is not None else None,
-            params=params,
-        )
-    text = res.text
-    try:
-        data: Any = json.loads(text)
-    except json.JSONDecodeError:
-        data = {"raw": text}
-    if not res.is_success:
-        raise GenApiError(f"API error {res.status_code}: {json.dumps(data)}")
-    return data
+async def integration_api_call(method: str, path: str, body: Any | None = None) -> Any:
+    """Social publishing integration service — python.gen.pro (schedule, OAuth connect)."""
+    return await _call(INTEGRATION_BASE, method, path, body)
 
 
 def json_result(data: Any) -> str:
