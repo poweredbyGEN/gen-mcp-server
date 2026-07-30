@@ -85,7 +85,16 @@ async def gen_create_agent(
     eleven_lab_api_key: Annotated[Optional[str], Field(default=None, description="ElevenLabs API key for voice synthesis")] = None,
     hume_ai_api_key: Annotated[Optional[str], Field(default=None, description="Hume AI API key for emotional voice")] = None,
 ) -> str:
-    body = {"agent": agent}
+    agent_attrs: dict = {"name": name}
+    if description is not None:
+        agent_attrs["description"] = description
+    if time_zone is not None:
+        agent_attrs["time_zone"] = time_zone
+    if eleven_lab_api_key is not None:
+        agent_attrs["eleven_lab_api_key"] = eleven_lab_api_key
+    if hume_ai_api_key is not None:
+        agent_attrs["hume_ai_api_key"] = hume_ai_api_key
+    body: dict = {"agent": agent_attrs}
     if organization_id is not None:
         body["organization_id"] = organization_id
     data = await api_call("POST", "/agents", body)
@@ -111,7 +120,18 @@ async def gen_update_agent(
     eleven_lab_api_key: Annotated[Optional[str], Field(default=None, description="ElevenLabs API key")] = None,
     hume_ai_api_key: Annotated[Optional[str], Field(default=None, description="Hume AI API key")] = None,
 ) -> str:
-    data = await api_call("PATCH", f"/agents/{agent_id}", {"agent": agent})
+    agent_attrs: dict = {}
+    if name is not None:
+        agent_attrs["name"] = name
+    if description is not None:
+        agent_attrs["description"] = description
+    if time_zone is not None:
+        agent_attrs["time_zone"] = time_zone
+    if eleven_lab_api_key is not None:
+        agent_attrs["eleven_lab_api_key"] = eleven_lab_api_key
+    if hume_ai_api_key is not None:
+        agent_attrs["hume_ai_api_key"] = hume_ai_api_key
+    data = await api_call("PATCH", f"/agents/{agent_id}", {"agent": agent_attrs})
     return json_result(data)
 
 @mcp.tool(name="gen_delete_agent", description="Step 1 (Agent Setup): Soft-delete an agent (requires owner/manager role or being the creator).")
@@ -176,7 +196,7 @@ async def gen_get_agent_core(
 async def gen_update_agent_core(
     agent_id: Annotated[str, Field(description="The agent ID")],
     identity: Annotated[Optional[dict], Field(default=None, description="Identity merge-patch")] = None,
-    overview: Annotated[Optional[bool], Field(default=None, description="e.g. 'growth', 'authority', 'sales'")] = None,
+    overview: Annotated[Optional[dict], Field(default=None, description="Overview merge-patch, e.g. {'goal': 'growth'} | {'brand_name': '...', 'identity_type': 'personal'}")] = None,
     personality: Annotated[Optional[str], Field(default=None, description="Full personality / backstory text — replaces existing")] = None,
     inspiration: Annotated[Optional[list], Field(default=None, description="Inspiration source URLs — replaces full list")] = None,
     look: Annotated[Optional[dict], Field(default=None, description="Look description merge-patch (reference_images managed via item-level tools)")] = None,
@@ -230,7 +250,7 @@ async def gen_create_agent_profile(
     agent_id: Annotated[str, Field(description="The agent ID")],
     identity: Annotated[Optional[dict], Field(default=None, description="Identity: name, description, persona")] = None,
     voice: Annotated[Optional[dict], Field(default=None, description="Voice: API keys and default voice config")] = None,
-    brand: Annotated[Optional[float], Field(default=None, description="Persistent rules, newline-separated: '- always use statement hooks\\\\n- never mention competitors'")] = None,
+    brand: Annotated[Optional[dict], Field(default=None, description="Brand section: brand_name, description, goal, keywords, target_platforms, content_idea_preferences")] = None,
 ) -> str:
     body = {}
     if identity is not None:
@@ -247,7 +267,7 @@ async def gen_update_agent_profile(
     agent_id: Annotated[str, Field(description="The agent ID")],
     identity: Annotated[Optional[dict], Field(default=None, description="")] = None,
     voice: Annotated[Optional[dict], Field(default=None, description="")] = None,
-    brand: Annotated[Optional[float], Field(default=None, description="Persistent rules, newline-separated")] = None,
+    brand: Annotated[Optional[dict], Field(default=None, description="Brand section: brand_name, description, goal, keywords, target_platforms, content_idea_preferences")] = None,
 ) -> str:
     body = {}
     if identity is not None:
@@ -279,7 +299,10 @@ async def gen_list_agent_voices(
     agent_id: Annotated[str, Field(description="The agent ID")],
     source: Annotated[Optional[str], Field(default=None, description="Filter by source")] = None,
 ) -> str:
-    data = await api_call("GET", f"/agents/{agent_id}/voice/library{suffix}")
+    path = f"/agents/{agent_id}/voice/library"
+    if source is not None:
+        path += f"?source={source}"
+    data = await api_call("GET", path)
     return json_result(data)
 
 @mcp.tool(name="gen_generate_voice_script", description="Step 1 (Agent Setup) — Voice design 1/4: generate a read-aloud script (the text the candidate voice will speak in step 3). Only needed when designing a new voice programmatically; most users do this in the web UI.")
@@ -419,7 +442,9 @@ async def gen_generate_content_ideas(
     video_type: Annotated[Optional[str], Field(default=None, description="Filter: talking_avatar | green_screen | montage | text_driven | pov_object | voiceover | split_screen | skit")] = None,
     conversation_id: Annotated[Optional[str], Field(default=None, description="Continue existing conversation to refine ideas")] = None,
 ) -> str:
-    body = {"message": msg, "agent_id": agent_id}
+    body: dict = {"agent_id": agent_id}
+    if message is not None:
+        body["message"] = message
     if conversation_id is not None:
         body["conversation_id"] = conversation_id
     data = await agent_api_call("POST", "/agent/run", body)
@@ -485,7 +510,7 @@ async def gen_update_idea_status(
 
 @mcp.tool(name="gen_create_song_mix", description="Public API (agent.gen.pro): Create a DJ-style song-mix job that combines multiple songs/tracks into one long audio output. Use for 'mix these 5 songs', 'combine these tracks into one long song', or 'create 5 songs and combine them'. Returns status=pending_engine until the Mixxx-compatible renderer worker is installed, or pending_song_generation when songs must be generated first.")
 async def gen_create_song_mix(
-    tracks: Annotated[Optional[float], Field(default=None, description="Song title, if known")] = None,
+    tracks: Annotated[Optional[list], Field(default=None, description="List of track objects to mix, e.g. [{'song_generation_id': '...'}, ...]. Omit to auto-generate songs.")] = None,
     prompt: Annotated[Optional[str], Field(default=None, description="Custom DJ mix prompt. Omit to use the default optimal-order BPM/key/mood prompt.")] = None,
     transition_style: Annotated[Optional[str], Field(default=None, description="Transition style, e.g. professional, smooth, high-energy.")] = None,
     output_format: Annotated[Optional[str], Field(default=None, description="Final audio format. Defaults to mp3.")] = None,
@@ -709,8 +734,14 @@ async def gen_update_column(
     type: Annotated[Optional[str], Field(default=None, description="New column type: text | image | video | audio")] = None,
     position: Annotated[Optional[float], Field(default=None, description="New position (0-indexed)")] = None,
 ) -> str:
-    body = {"agent_id": agent_id}
-    body["spreadsheet_column"] = spreadsheet_column
+    col: dict = {}
+    if title is not None:
+        col["title"] = title
+    if type is not None:
+        col["type"] = type
+    if position is not None:
+        col["position"] = position
+    body = {"agent_id": agent_id, "spreadsheet_column": col}
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/columns/{column_id}", body)
     return json_result(data)
 
@@ -776,7 +807,10 @@ async def gen_create_layer(
     type: Annotated[str, Field(description="Type of the layer")],
     position: Annotated[Optional[float], Field(default=None, description="Position of the layer (0-indexed)")] = None,
 ) -> str:
-    data = await api_call("POST", f"/vidsheet/{engine_id}/cells/{cell_id}/layers", {"agent_id": agent_id, "video_layer": videoLayer})
+    layer: dict = {"name": name, "type": type}
+    if position is not None:
+        layer["position"] = position
+    data = await api_call("POST", f"/vidsheet/{engine_id}/cells/{cell_id}/layers", {"agent_id": agent_id, "video_layer": layer})
     return json_result(data)
 
 @mcp.tool(name="gen_get_layer", description="Step 4 (Edit & Generate): Get details of a specific layer in a cell, including its type, position, additional_attributes, and generation history.")
@@ -800,8 +834,16 @@ async def gen_update_layer(
     position: Annotated[Optional[float], Field(default=None, description="New position (0-indexed)")] = None,
     additional_attributes: Annotated[Optional[dict], Field(default=None, description="Additional attributes to set")] = None,
 ) -> str:
-    body = {"agent_id": agent_id}
-    body["video_layer"] = video_layer
+    layer_patch: dict = {}
+    if name is not None:
+        layer_patch["name"] = name
+    if type is not None:
+        layer_patch["type"] = type
+    if position is not None:
+        layer_patch["position"] = position
+    if additional_attributes is not None:
+        layer_patch["additional_attributes"] = additional_attributes
+    body = {"agent_id": agent_id, "video_layer": layer_patch}
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/cells/{cell_id}/layers/{layer_id}", body)
     return json_result(data)
 
@@ -830,7 +872,14 @@ async def gen_list_content_resources(
     project_id: Annotated[Optional[str], Field(default=None, description="Filter to resources attached to a specific project")] = None,
     page: Annotated[Optional[str], Field(default=None, description="Page number for pagination (default 0, 20 items per page)")] = None,
 ) -> str:
-    data = await api_call("GET", f"/content_resources?{params.toString()}")
+    path = f"/content_resources?agent_id={agent_id}"
+    if type is not None:
+        path += f"&type={type}"
+    if project_id is not None:
+        path += f"&project_id={project_id}"
+    if page is not None:
+        path += f"&page={page}"
+    data = await api_call("GET", path)
     return json_result(data)
 
 @mcp.tool(name="gen_create_content_resource", description="Step 4 (Edit & Generate): Create a content resource from a signed_id. Use gen_create_direct_upload first to upload the file, then pass the signed_id here.")
@@ -880,7 +929,20 @@ async def gen_list_asset_libraries(
     page: Annotated[Optional[str], Field(default=None, description="Page number (default 1)")] = None,
     page_size: Annotated[Optional[str], Field(default=None, description="Items per page (default 20)")] = None,
 ) -> str:
-    data = await api_call("GET", f"/asset_libraries?{params.toString()}")
+    path = f"/asset_libraries?agent_id={agent_id}"
+    if folder_id is not None:
+        path += f"&folder_id={folder_id}"
+    if asset_type is not None:
+        path += f"&asset_type={asset_type}"
+    if search is not None:
+        path += f"&search={search}"
+    if order is not None:
+        path += f"&order={order}"
+    if page is not None:
+        path += f"&page={page}"
+    if page_size is not None:
+        path += f"&page_size={page_size}"
+    data = await api_call("GET", path)
     return json_result(data)
 
 @mcp.tool(name="gen_create_direct_upload", description="Step 4 (Edit & Generate): Get a pre-signed S3 URL for direct file upload. Two-step: (1) call this, (2) PUT the file to the returned URL, (3) pass the returned signed_id to gen_create_content_resource.")
@@ -1041,7 +1103,7 @@ async def gen_pause_watchlist(
     agent_id: Annotated[str, Field(description="The agent ID")],
     watchlist_id: Annotated[str, Field(description="The watchlist id")],
 ) -> str:
-    data = await agent_core_api_call("PATCH", f"/agents/{agent_id}/watchlists/{watchlist_id}", {"intent_active": false})
+    data = await agent_core_api_call("PATCH", f"/agents/{agent_id}/watchlists/{watchlist_id}", {"intent_active": False})
     return json_result(data)
 
 @mcp.tool(name="gen_resume_watchlist", description="Step 3 (Monitoring): Resume a paused watchlist. Sets intent_active=true so the scheduler resumes queueing scrapes for the watchlist's sources.")
@@ -1049,7 +1111,7 @@ async def gen_resume_watchlist(
     agent_id: Annotated[str, Field(description="The agent ID")],
     watchlist_id: Annotated[str, Field(description="The watchlist id")],
 ) -> str:
-    data = await agent_core_api_call("PATCH", f"/agents/{agent_id}/watchlists/{watchlist_id}", {"intent_active": true})
+    data = await agent_core_api_call("PATCH", f"/agents/{agent_id}/watchlists/{watchlist_id}", {"intent_active": True})
     return json_result(data)
 
 @mcp.tool(name="gen_delete_watchlist", description="Step 3 (Monitoring): Soft-delete a watchlist. Marks the watchlist and all its sources as inactive and deleted. The data is retained but no longer returned by gen_list_watchlists or gen_get_watchlist. Use gen_pause_watchlist if you only want to temporarily stop monitoring.")
@@ -1143,7 +1205,10 @@ async def gen_list_proof_of_genesis_backups(
     agent_id: Annotated[str, Field(description="The agent ID that owns the backups")],
     include_removed: Annotated[Optional[bool], Field(default=None, description="Include rows removed from the default assets-page view. Defaults to false.")] = None,
 ) -> str:
-    data = await agent_core_api_call("GET", f"/agents/{agent_id}/proof-of-genesis/backups{suffix}")
+    path = f"/agents/{agent_id}/proof-of-genesis/backups"
+    if include_removed:
+        path += "?include_removed=true"
+    data = await agent_core_api_call("GET", path)
     return json_result(data)
 
 @mcp.tool(name="gen_create_proof_of_genesis_backup", description="Step 4 (Assets): Manually back up a GEN image or video asset to Walrus for the monthly Proof of Genesis storage period, or record an automatic asset event. Automatic backup defaults to downloaded/published assets when enabled. Public assets may be uploaded raw. Private assets must be encrypted before upload because Walrus blobs are public by default. Charges operation backup_to_blockchain with GB-month units after successful upload/readback verification.")
@@ -1198,11 +1263,15 @@ async def gen_create_recurring_job(
     job_type: Annotated[str, Field(description="Job type. Default content-ideas pipeline: 'generate_content_ideas'.")],
     prompt: Annotated[str, Field(description="Natural-language prompt the agent runs each cycle (e.g. 'Generate 5 TikTok content ideas for my skincare brand')")],
     name: Annotated[Optional[str], Field(default=None, description="Display name. Defaults to the first 80 chars of prompt if omitted.")] = None,
-    schedule: Annotated[Optional[float], Field(default=None, description="How often to run")] = None,
-    delivery: Annotated[Optional[str], Field(default=None, description="chat_only writes results into the conversation; email also sends a templated digest")] = None,
+    schedule: Annotated[Optional[dict], Field(default=None, description="Schedule config, e.g. {'cadence': 'daily', 'time_of_day': '09:00', 'timezone': 'UTC'} or {'cadence': 'weekly', 'days_of_week': [0,2,4], 'time_of_day': '09:00', 'timezone': 'UTC'}")] = None,
+    delivery: Annotated[Optional[dict], Field(default=None, description="Delivery config, e.g. {'type': 'chat_only'} or {'type': 'email', 'email': 'user@example.com'}")] = None,
     next_run_at: Annotated[Optional[str], Field(default=None, description="ISO-8601 timestamp to schedule the first run (defaults to the next slot from cadence)")] = None,
 ) -> str:
-    body = {"job_type": job_type, "prompt": prompt, "schedule": schedule, "delivery": delivery}
+    body: dict = {"job_type": job_type, "prompt": prompt}
+    if schedule is not None:
+        body["schedule"] = schedule
+    if delivery is not None:
+        body["delivery"] = delivery
     if name is not None:
         body["name"] = name
     if next_run_at is not None:
@@ -1231,8 +1300,8 @@ async def gen_update_recurring_job(
     job_id: Annotated[str, Field(description="The recurring job id")],
     name: Annotated[Optional[str], Field(default=None, description="New display name")] = None,
     prompt: Annotated[Optional[str], Field(default=None, description="New prompt the agent will run each cycle")] = None,
-    schedule: Annotated[Optional[float], Field(default=None, description="Days to run (0=Mon … 6=Sun). REQUIRED when cadence='weekly'; omit when 'daily'.")] = None,
-    delivery: Annotated[Optional[str], Field(default=None, description="Recipient email. REQUIRED when type='email'; omit when 'chat_only'.")] = None,
+    schedule: Annotated[Optional[dict], Field(default=None, description="Schedule config (full replacement): e.g. {'cadence': 'weekly', 'days_of_week': [0,2,4], 'time_of_day': '09:00', 'timezone': 'UTC'}")] = None,
+    delivery: Annotated[Optional[dict], Field(default=None, description="Delivery config (full replacement): e.g. {'type': 'email', 'email': 'user@example.com'} or {'type': 'chat_only'}")] = None,
     next_run_at: Annotated[Optional[str], Field(default=None, description="ISO-8601 timestamp to override the next run time")] = None,
 ) -> str:
     body = {}
