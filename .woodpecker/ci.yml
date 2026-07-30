@@ -1,0 +1,24 @@
+# First CI for this repo (added with scripts/deploy_hosted.sh, 2026-07-30).
+# `push` is mandatory alongside pull_request — the deploy gate consumes the
+# push/main pipeline. No path filter: the repo is small, always validate.
+when:
+  - event: [push, pull_request]
+
+steps:
+  package:
+    image: python:3.12-slim
+    commands:
+      # The hosted deploy path builds a wheel from a git sha and installs it —
+      # prove the package builds, installs, imports, and exposes the entrypoint.
+      - pip install --quiet .
+      - python -c "import gen_mcp_server"
+      - gen-mcp-server --help
+
+  deploy-script:
+    image: python:3.12-slim
+    commands:
+      # Syntax-check the hosted deploy script and prove its argument guards
+      # fail closed (no subcommand / malformed sha must exit non-zero).
+      - bash -n scripts/deploy_hosted.sh
+      - if bash scripts/deploy_hosted.sh; then echo "usage guard failed open"; exit 1; fi
+      - if bash scripts/deploy_hosted.sh build --sha not-a-sha; then echo "sha guard failed open"; exit 1; fi
