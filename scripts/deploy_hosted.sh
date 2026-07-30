@@ -88,9 +88,13 @@ cmd_build() {
   require_sha
   local name scratch wheel
   name=$(venv_name_for_sha)
-  # Big scratch belongs on disk, never on the tmpfs.
+  # Big scratch belongs on disk, never on the tmpfs. Expand $scratch NOW
+  # (double quotes): a deferred single-quoted expansion reads the local var
+  # after it is out of scope at EXIT time, which under `set -u` turns a fully
+  # successful build into exit 1 (and skips the cleanup).
   scratch=$(mktemp -d "${TMPDIR:-/mnt/data/tmp}/gen-mcp-build.XXXXXX")
-  trap 'rm -rf "$scratch"' EXIT
+  # shellcheck disable=SC2064
+  trap "rm -rf '$scratch'" EXIT
   echo "build: exporting $SHA and building wheel in $scratch"
   git -C "$REPO_DIR" archive "$SHA" | tar -x -C "$scratch"
   python3 -m pip wheel --no-deps --wheel-dir "$scratch/dist" "$scratch" >/dev/null
