@@ -1,70 +1,55 @@
 # GEN MCP Server
 
-MCP (Model Context Protocol) server for the GEN platform. Lets Claude Code
-and any MCP-compatible AI interact with the GEN Auto Content Engine + Agent
-Core directly.
+> ## ⚠️ The downloadable package is deprecated — use `https://mcp.gen.pro`
+>
+> **This is the FINAL PyPI release of `gen-mcp-server`.** GEN no longer ships a
+> downloadable MCP: the official GEN MCP is the **hosted server** at
+> `https://mcp.gen.pro`. No further versions will be published to PyPI.
+>
+> The package still works so existing integrations have a migration window, but
+> it will not receive new tools, fixes, or API updates — the hosted server is
+> already ahead of it and is the only surface kept in sync with the GEN API.
+> Installing it emits a `DeprecationWarning`; the stdio CLI prints a notice to
+> stderr on start.
 
-**This server is organized around the 5-step user journey** every GEN user
-follows, from onboarding an agent to publishing a video. Tool descriptions
-start with the step name (e.g. "Step 4 (Edit & Generate): …") so AI tooling
-can route quickly.
+## Use the official hosted MCP (all clients)
 
-The server runs in **two modes** from one codebase:
+No install. Point your MCP client at the hosted endpoint and authenticate with
+your GEN Personal Access Token (from https://gen.pro — log in, pick an agent,
+open the **API** page in the sidebar, click **Create API Key**):
 
-- **Local (stdio)** — for desktop/CLI MCP clients that launch a local process:
-  Claude Code, Cursor, VS Code, Claude Desktop. Authenticates with the
-  `GEN_API_KEY` env var.
-- **Hosted (Streamable HTTP)** — for cloud agents that connect to a URL:
-  **Manus** custom MCP, claude.ai connectors, ChatGPT. Multi-tenant — each
-  caller sends their own PAT as `Authorization: Bearer <gen_PAT>`, served at
-  `https://mcp.gen.pro` (bare root; `/mcp` still works as a legacy alias).
-
-## Install (local / stdio)
-
-```bash
-# via uv (recommended)
-uvx gen-mcp-server
-# or pip
-pip install gen-mcp-server && gen-mcp-server
+```json
+{
+  "name": "gen",
+  "url": "https://mcp.gen.pro",
+  "headers": { "Authorization": "Bearer gen_pat_…" }
+}
 ```
 
-## Configure Claude Code (local)
+(Existing configs using `https://mcp.gen.pro/mcp` keep working.)
+
+**Claude Code:**
 
 ```bash
-claude mcp add gen -- uvx gen-mcp-server
+claude mcp add --transport http gen https://mcp.gen.pro \
+  --header "Authorization: Bearer gen_pat_…"
 ```
-
-Set your API key (Personal Access Token from https://gen.pro — log in, pick
-an agent, open the **API** page in the sidebar, click **Create API Key**):
-
-```bash
-export GEN_API_KEY=your-api-key
-```
-
-Optional base-URL overrides:
-
-```bash
-export GEN_API_BASE_URL=https://api.gen.pro/v1
-export GEN_AGENT_API_URL=https://agent.gen.pro/v1
-export GEN_AGENT_CORE_API_URL=https://agent-core.gen.pro/v1
-```
-
-## Use the hosted server (Manus / claude.ai / ChatGPT)
-
-No install — point the agent at the hosted endpoint and authenticate with
-your GEN PAT as a bearer token.
 
 **Manus:** Settings → Integrations → Custom MCP Servers → Add Server
 - **Server URL:** `https://mcp.gen.pro`
 - **Authentication:** Bearer token → your `gen_…` PAT
 
-**Self-host the HTTP transport:**
+**claude.ai connectors / ChatGPT:** add a custom MCP connector with the same
+URL + bearer token.
 
-```bash
-GEN_MCP_PORT=8080 gen-mcp-server --http   # serves streamable-http on :8080 at `/` and `/mcp`
-```
+The hosted server is multi-tenant — each caller acts as their own GEN identity;
+your PAT scopes everything you can see and do.
 
-## The 5-Step Journey
+## What it is
+
+MCP (Model Context Protocol) server for the GEN platform — lets Claude and any
+MCP-compatible AI drive the GEN Auto Content Engine + Agent Core: the full
+5-step journey from onboarding an agent to publishing a video.
 
 ```
 Step 1           Step 2            Step 3              Step 4             Step 5
@@ -73,85 +58,59 @@ Set Up    →    Generate    →     Idea to      →     Edit &      →     Ex
 Agent          Ideas             Vidsheet            Generate           Publish
 ```
 
-Read `gen://api-reference` (an MCP resource exposed by this server) for the
-full teaching document — it walks through each step with narrative, top
-tools, and chained curl examples.
+Read the `gen://api-reference` MCP resource for the full teaching document, and
+[api.gen.pro](https://api.gen.pro) for the API reference. Tool descriptions
+start with the step name (e.g. "Step 4 (Edit & Generate): …") so AI tooling can
+route quickly.
 
-## Available Tools
+## Legacy local install (deprecated — migrate to the hosted URL above)
 
-### Step 1 — Set Up Your Agent
+The stdio mode still functions for the migration window:
 
-Discovery, workspaces, agent CRUD, identity/overview/personality/voice setup,
-API keys.
+```bash
+uvx gen-mcp-server           # or: pip install gen-mcp-server && gen-mcp-server
+export GEN_API_KEY=your-api-key
+```
 
-- `gen_get_me`, `gen_list_workspaces`, `gen_list_agents`
-- `gen_list_organizations`, `gen_create_organization`, `gen_get_organization`, `gen_update_organization`, `gen_delete_organization`
-- `gen_create_agent`, `gen_get_agent`, `gen_update_agent`, `gen_delete_agent`
-- `gen_list_agent_avatars`, `gen_create_agent_avatar`, `gen_delete_agent_avatar`
-- **`gen_get_agent_core`** / **`gen_update_agent_core`** — STAR tools (one call reads or writes every setup section)
-- `gen_add_agent_account`, `gen_add_agent_inspiration`
-- `gen_get_agent_profile`, `gen_create_agent_profile`, `gen_update_agent_profile`, `gen_reset_agent_profile`
-- `gen_connect_agent_elevenlabs`, `gen_list_agent_voices`
-- Voice design flow: `gen_generate_voice_script` → `gen_generate_voice_description` → `gen_generate_voice_samples` → `gen_design_voice`
-- `gen_clone_voice`, `gen_preview_voice`, `gen_get_voice_preview_status`, `gen_delete_voice`
-- `gen_list_api_keys`, `gen_create_api_key`, `gen_revoke_api_key`
+It prints a deprecation notice to stderr on start. Do not build new
+integrations on it; use `https://mcp.gen.pro`.
 
-### Step 2 — Generate Content Ideas
+Optional base-URL overrides (legacy stdio only):
 
-AI-driven idea generation grounded in trend data, refinement, preferences,
-research, conversations, and monitoring jobs.
+```bash
+export GEN_API_BASE_URL=https://api.gen.pro/v1
+export GEN_AGENT_API_URL=https://agent.gen.pro/v1
+export GEN_AGENT_CORE_API_URL=https://agent-core.gen.pro/v1
+```
 
-- **`gen_generate_content_ideas`** — starting point
-- `gen_get_run_status`, `gen_list_content_ideas`, `gen_update_idea_status`
-- `gen_refine_content_ideas`, `gen_set_content_preference`
-- `gen_list_conversations`, `gen_get_conversation`
-- `gen_run_research`
-- `gen_create_monitoring_job`, `gen_update_monitoring_job`
+## Development (this repo stays alive — it IS the hosted server)
 
-### Step 3 — Convert Idea to Vidsheet
-
-Clone a template or build from scratch. After cloning, PATCH cells to inject the idea's script / hook / variables.
-
-- `gen_list_templates`, `gen_get_template`, **`gen_clone_template`**
-- `gen_create_engine`, `gen_get_engine`, `gen_clone_engine`
-
-### Step 4 — Edit & Generate
-
-Columns, rows, cells, layers, variables, content resources, and AI
-generations (text/image/video/speech/lipsync/captions).
-
-- `gen_list_columns`, `gen_create_column`, `gen_update_column`, `gen_delete_column`
-- `gen_list_rows`, `gen_create_row`, `gen_duplicate_row`
-- `gen_get_cell`, `gen_update_cell`
-- `gen_create_layer`, `gen_get_layer`, `gen_update_layer`, `gen_delete_layer`
-- `gen_list_variables`
-- `gen_list_content_resources`, `gen_create_content_resource`, `gen_get_content_resource`, `gen_update_content_resource`, `gen_delete_content_resource`
-- `gen_list_asset_libraries`, `gen_create_direct_upload`
-- `gen_list_proof_of_genesis_backups`, `gen_create_proof_of_genesis_backup`, `gen_remove_proof_of_genesis_backup` — monthly Walrus backup rows include expiry/renewal metadata for Proof of Genesis.
-- **`gen_generate_content`** — the workhorse (all canonical generation types)
-- `gen_generate_layer`, `gen_get_generation`, `gen_stop_generation`, `gen_continue_generation`
-
-### Step 5 — Export & Publish
-
-- **`gen_render_video`** — composite the final MP4
-- **`gen_publish_content`** — post or schedule to a connected social account
-
-## Development
+This repository remains the source of the hosted `mcp.gen.pro` deployment; only
+the PyPI distribution is retired.
 
 ```bash
 git clone https://github.com/poweredbyGEN/gen-mcp-server.git
 cd gen-mcp-server
-npm install
-npm run build
-GEN_API_KEY=your-key npm start
+uv venv && . .venv/bin/activate
+uv pip install -e .
+GEN_MCP_PORT=8080 gen-mcp-server --http   # hosted streamable-http mode, serves `/` and `/mcp`
 ```
 
 ## See also
 
-- **TypeScript SDK:** [github.com/poweredbyGEN/gen-typescript-sdk](https://github.com/poweredbyGEN/gen-typescript-sdk) — type-safe client for Node.js and TypeScript projects
 - **API Docs:** [api.gen.pro](https://api.gen.pro) — full API reference and guides
+- **TypeScript SDK:** [github.com/poweredbyGEN/gen-typescript-sdk](https://github.com/poweredbyGEN/gen-typescript-sdk)
 
 ## Changelog
+
+### 1.0.0 — FINAL PyPI RELEASE (deprecation pointer)
+- The downloadable package is deprecated; the official GEN MCP is the hosted
+  server at `https://mcp.gen.pro` (GEN-4785)
+- `DeprecationWarning` on import when installed from PyPI; stderr notice on
+  stdio CLI start. Hosted (`--http`) mode is unaffected
+- Includes everything on main at cut time, including the Python/FastMCP rewrite
+  (GEN-3788) and the 2026-07-30 tool additions (billing, social, schedule,
+  assets, generation, compose — 31 tools) never previously published
 
 ### 0.5.0
 - Restructured all 81 tools around the 5-step user journey (GEN-2879)
