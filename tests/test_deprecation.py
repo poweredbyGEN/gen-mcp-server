@@ -74,12 +74,15 @@ def test_stdio_cli_prints_banner_to_stderr(monkeypatch, capsys):
 
 
 def test_http_mode_has_no_banner(monkeypatch, capsys):
+    import types
+
     import gen_mcp_server.__main__ as entry
 
     ran = {}
-    monkeypatch.setattr(entry.mcp, "run", lambda **kw: ran.update(kw))
+    fake_uvicorn = types.SimpleNamespace(run=lambda app, **kw: ran.update(app=app, **kw))
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
     monkeypatch.setattr(sys, "argv", ["gen-mcp-server", "--http", "--port", "8091"])
     entry.main()
     err = capsys.readouterr().err
     assert "DEPRECATED" not in err, "hosted --http mode is the official surface — no banner"
-    assert ran.get("transport") == "streamable-http"
+    assert ran.get("port") == 8091 and ran.get("app") is not None
