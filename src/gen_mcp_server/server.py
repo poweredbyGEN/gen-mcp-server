@@ -1281,6 +1281,22 @@ async def gen_run_recurring_job_now(
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/test-run")
     return json_result(data)
 
+@mcp.tool(name="gen_duplicate_recurring_job", description="Step 3 (Monitoring): Copy a recurring job to a different vidsheet. The copy inherits the source's prompt (rewritten to the new sheet), schedule, delivery settings, and actions. Returns 409 if the destination sheet already has an automation. Use when you want to run the same workflow on a different sheet without rebuilding it from scratch.")
+async def gen_duplicate_recurring_job(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    job_id: Annotated[str, Field(description="The recurring job ID to duplicate")],
+    vidsheet_url: Annotated[str, Field(description="URL of the destination vidsheet to copy the job to")],
+    name: Annotated[Optional[str], Field(default=None, description="Name for the copy (defaults to '<source name> (copy)')")] = None,
+    activate: Annotated[Optional[bool], Field(default=None, description="Whether the copy starts active (default true)")] = None,
+) -> str:
+    body: dict = {"vidsheet_url": vidsheet_url}
+    if name is not None:
+        body["name"] = name
+    if activate is not None:
+        body["activate"] = activate
+    data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/duplicate", body)
+    return json_result(data)
+
 # ─── Billing ──────────────────────────────────────────────────────────────────
 
 @mcp.tool(name="gen_get_credit_balance", description="Step 5 (Export & Publish): Get the agent's available credit balance. Check this before paid operations (generate, render, publish) to confirm the workspace has usable credits.")
