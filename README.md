@@ -17,7 +17,7 @@ The server runs in **two modes** from one codebase:
 - **Hosted (Streamable HTTP)** — for cloud agents that connect to a URL:
   **Manus** custom MCP, claude.ai connectors, ChatGPT. Multi-tenant — each
   caller sends their own PAT as `Authorization: Bearer <gen_PAT>`, served at
-  `https://mcp.gen.pro/mcp`.
+  `https://mcp.gen.pro` (bare root; `/mcp` still works as a legacy alias).
 
 ## Install (local / stdio)
 
@@ -55,13 +55,13 @@ No install — point the agent at the hosted endpoint and authenticate with
 your GEN PAT as a bearer token.
 
 **Manus:** Settings → Integrations → Custom MCP Servers → Add Server
-- **Server URL:** `https://mcp.gen.pro/mcp`
+- **Server URL:** `https://mcp.gen.pro`
 - **Authentication:** Bearer token → your `gen_…` PAT
 
 **Self-host the HTTP transport:**
 
 ```bash
-GEN_MCP_PORT=8080 gen-mcp-server --http   # serves streamable-http on :8080/mcp
+GEN_MCP_PORT=8080 gen-mcp-server --http   # serves streamable-http on :8080 at `/` and `/mcp`
 ```
 
 ## The 5-Step Journey

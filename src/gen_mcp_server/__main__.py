@@ -2,7 +2,9 @@
 
   gen-mcp-server                 -> stdio   (default; what the PyPI/npm package ships
                                              and what Claude Code / Cursor / VS Code run)
-  gen-mcp-server --http          -> streamable-http on 0.0.0.0:8080/mcp
+  gen-mcp-server --http          -> streamable-http on 0.0.0.0:8080, served at
+                                    BOTH `/` (canonical: https://mcp.gen.pro) and
+                                    `/mcp` (legacy alias for existing configs)
                                     (hosted mode for Manus / claude.ai connectors /
                                      ChatGPT — fronted by Cloudflare at mcp.gen.pro)
 
@@ -35,7 +37,22 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.http:
-        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+        import uvicorn
+
+        # Canonical MCP endpoint is the BARE root (`{"url": "https://mcp.gen.pro"}`).
+        # `/mcp` (the old FastMCP-default path) stays as an alias so every client
+        # configured before the switch keeps working — alias, not redirect, because
+        # MCP clients are not guaranteed to re-POST a JSON-RPC body across a 30x.
+        app = mcp.http_app(path="/")
+
+        async def dual_path_app(scope, receive, send):  # ASGI wrapper
+            if scope["type"] == "http" and scope.get("path") in ("/mcp", "/mcp/"):
+                scope = dict(scope)
+                scope["path"] = "/"
+                scope["raw_path"] = b"/"
+            await app(scope, receive, send)
+
+        uvicorn.run(dual_path_app, host=args.host, port=args.port)
     else:
         # stdio: PAT must be present in env (fail fast, like the TS server).
         if not os.environ.get("GEN_API_KEY"):
