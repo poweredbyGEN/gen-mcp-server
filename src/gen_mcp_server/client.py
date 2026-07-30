@@ -72,7 +72,13 @@ def _resolve_pat() -> str:
     return pat
 
 
-async def _call(base: str, method: str, path: str, body: Any | None = None) -> Any:
+async def _call(
+    base: str,
+    method: str,
+    path: str,
+    body: Any | None = None,
+    params: dict[str, Any] | None = None,
+) -> Any:
     pat = _resolve_pat()
     url = f"{base}{path}"
     async with httpx.AsyncClient(timeout=120.0) as http:
@@ -84,6 +90,7 @@ async def _call(base: str, method: str, path: str, body: Any | None = None) -> A
                 "Content-Type": "application/json",
                 "X-Client": "gen-mcp-server",
             },
+            params=params,
             content=json.dumps(body) if body is not None else None,
         )
     text = res.text
@@ -141,9 +148,14 @@ async def agent_core_api_call(method: str, path: str, body: Any | None = None) -
     return await _call(AGENT_CORE_API_BASE, method, path, body)
 
 
-async def integration_api_call(method: str, path: str, body: Any | None = None) -> Any:
+async def integration_api_call(
+    method: str,
+    path: str,
+    body: Any | None = None,
+    params: dict[str, Any] | None = None,
+) -> Any:
     """Social publishing integration service — python.gen.pro (schedule, OAuth connect)."""
-    return await _call(INTEGRATION_BASE, method, path, body)
+    return await _call(INTEGRATION_BASE, method, path, body, params=params)
 
 
 def json_result(data: Any) -> str:
