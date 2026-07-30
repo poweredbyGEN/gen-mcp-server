@@ -13,7 +13,11 @@ SIMPLE_TYPE_MAP: dict[str, str] = {
 
 
 def _image_from_text(model: str) -> str:
-    return "midjourney" if model == "midjourney" else "gemini_image_generation"
+    if model == "midjourney":
+        return "midjourney"
+    if model == "grok":
+        return "grok_image_generation"
+    return "gemini_image_generation"
 
 
 def _video_from_text(model: str) -> str:
@@ -21,8 +25,12 @@ def _video_from_text(model: str) -> str:
         return "sora2_video_generation"
     if model.startswith("kling"):
         return "kling"
+    if model == "seedance-2.0" or model == "seedance_2_0":
+        return "seedance_2_0_video_generation"
     if model.startswith("seedance"):
         return "seedance_video_generation"
+    if model == "grok":
+        return "grok_video_generation"
     return "gemini_video_generation"
 
 
@@ -31,8 +39,12 @@ def _video_from_image(model: str) -> str:
         return "kling_image_video"
     if model.startswith("sora"):
         return "sora2_video_generation"
+    if model == "seedance-2.0" or model == "seedance_2_0":
+        return "seedance_2_0_video_generation"
     if model.startswith("seedance"):
         return "seedance_video_generation"
+    if model == "grok":
+        return "grok_video_generation"
     return "gemini_video_generation"
 
 
