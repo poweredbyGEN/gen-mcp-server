@@ -1,6 +1,6 @@
 [project]
 name = "gen-mcp-server"
-version = "0.9.1"
+version = "0.9.2"
 description = "GEN MCP server — Auto Content Engine + Agent Core. Runs local (stdio) or hosted (streamable-http)."
 readme = "README.md"
 requires-python = ">=3.10"
