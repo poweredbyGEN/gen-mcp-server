@@ -13,7 +13,7 @@ from .client import api_call, agent_api_call, agent_core_api_call, form_call, in
 from .generation_types import resolve_generation_type
 from .reference import API_REFERENCE
 
-mcp = FastMCP(name="gen", version="0.9.2")
+mcp = FastMCP(name="gen", version="1.0.0")
 
 
 @mcp.resource("gen://api-reference", mime_type="text/markdown")

@@ -20,6 +20,7 @@ import argparse
 import os
 import sys
 
+from . import DEPRECATION_NOTICE
 from .server import mcp
 
 
@@ -37,6 +38,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.http:
+        # Hosted mode IS the official surface (mcp.gen.pro) — no deprecation
+        # banner here (GEN-4785); only the stdio path below is deprecated.
         import uvicorn
 
         # Canonical MCP endpoint is the BARE root (`{"url": "https://mcp.gen.pro"}`).
@@ -54,6 +57,10 @@ def main() -> None:
 
         uvicorn.run(dual_path_app, host=args.host, port=args.port)
     else:
+        # Local stdio is the deprecated delivery path (GEN-4785). Plain stderr,
+        # not a warnings.warn(), so no warning filter can silence it; stdio MCP
+        # clients ignore stderr for protocol purposes, so this is safe to print.
+        print(f"DEPRECATED: {DEPRECATION_NOTICE}", file=sys.stderr)
         # stdio: PAT must be present in env (fail fast, like the TS server).
         if not os.environ.get("GEN_API_KEY"):
             print("GEN_API_KEY environment variable is required", file=sys.stderr)
