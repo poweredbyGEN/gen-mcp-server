@@ -13,7 +13,7 @@ from .client import api_call, agent_api_call, agent_core_api_call, form_call, in
 from .generation_types import resolve_generation_type
 from .reference import API_REFERENCE
 
-mcp = FastMCP(name="gen", version="0.9.1")
+mcp = FastMCP(name="gen", version="0.9.2")
 
 
 @mcp.resource("gen://api-reference", mime_type="text/markdown")
@@ -1782,6 +1782,62 @@ async def gen_delete_variable(
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
 ) -> str:
     data = await api_call("DELETE", f"/vidsheet/{engine_id}/global_variables/{variable_id}?agent_id={agent_id}")
+    return json_result(data)
+
+# ─── Vidsheet undo / redo (change-set history) ───────────────────────────────
+# Backs the undo/redo surface: every grouped write to a vidsheet is
+# recorded as a change set you can walk back (or forward again). Use the `last`
+# tool to find the next thing you'd take back, then `undo`/`redo` it. Pass an
+# explicit change_set_id to undo/redo a specific change set instead of the most
+# recent one. Conflicts return 409 — refresh the engine and retry.
+
+@mcp.tool(name="gen_list_operations", description="Step 4 (Edit & Generate): List recent undoable change sets for a vidsheet (the undo/redo history). Returns {change_sets:[...]} newest-first. Set include_undone=true to also list already-undone change sets. Use gen_get_last_operation to find just the next thing you'd undo, then gen_undo_operation / gen_redo_operation.")
+async def gen_list_operations(
+    engine_id: Annotated[str, Field(description="The vidsheet/engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    limit: Annotated[Optional[float], Field(default=None, description="Max change sets to return (1-100, default 20).")] = None,
+    include_undone: Annotated[Optional[bool], Field(default=None, description="Include already-undone change sets (default false).")] = None,
+) -> str:
+    import urllib.parse as _up
+    q = {"agent_id": agent_id}
+    if limit is not None:
+        q["limit"] = str(int(limit))
+    if include_undone is not None:
+        q["include_undone"] = "true" if include_undone else "false"
+    qs = _up.urlencode(q)
+    data = await api_call("GET", f"/vidsheet/{engine_id}/operations?{qs}")
+    return json_result(data)
+
+@mcp.tool(name="gen_get_last_operation", description="Step 4 (Edit & Generate): Get the single next-to-undo change set for a vidsheet (what the undo button would take back). Returns {change_set: ... | null}. Cheaper than gen_list_operations when you only need the top of the undo stack.")
+async def gen_get_last_operation(
+    engine_id: Annotated[str, Field(description="The vidsheet/engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+) -> str:
+    data = await api_call("GET", f"/vidsheet/{engine_id}/operations/last?agent_id={agent_id}")
+    return json_result(data)
+
+@mcp.tool(name="gen_undo_operation", description="Step 4 (Edit & Generate): Undo the most recent undoable change set on a vidsheet (or a specific one by change_set_id). Returns {change_set_id, undone:[...], next_undoable}. Use after gen_get_last_operation. Returns nothing_to_undo (422) when the stack is empty; 409 undo_conflict means the engine changed under you — refresh (gen_get_engine) and retry.")
+async def gen_undo_operation(
+    engine_id: Annotated[str, Field(description="The vidsheet/engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    change_set_id: Annotated[Optional[str], Field(default=None, description="Undo this specific change set instead of the most recent undoable one.")] = None,
+) -> str:
+    body = {}
+    if change_set_id is not None:
+        body["change_set_id"] = change_set_id
+    data = await api_call("POST", f"/vidsheet/{engine_id}/operations/undo?agent_id={agent_id}", body or None)
+    return json_result(data)
+
+@mcp.tool(name="gen_redo_operation", description="Step 4 (Edit & Generate): Redo the most recently undone change set on a vidsheet (or a specific one by change_set_id). Returns {change_set_id, redone:[...], next_undoable}. Use to re-apply something just undone with gen_undo_operation. Returns nothing_to_redo (422) when there is nothing to redo; 409 redo_conflict — refresh (gen_get_engine) and retry.")
+async def gen_redo_operation(
+    engine_id: Annotated[str, Field(description="The vidsheet/engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    change_set_id: Annotated[Optional[str], Field(default=None, description="Redo this specific change set instead of the most recently undone one.")] = None,
+) -> str:
+    body = {}
+    if change_set_id is not None:
+        body["change_set_id"] = change_set_id
+    data = await api_call("POST", f"/vidsheet/{engine_id}/operations/redo?agent_id={agent_id}", body or None)
     return json_result(data)
 
 # ─── Compose / Natural-language delegation ────────────────────────────────────
