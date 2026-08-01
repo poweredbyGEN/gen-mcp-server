@@ -12,6 +12,48 @@ from pydantic import Field
 from .client import api_call, agent_api_call, agent_core_api_call, form_call, integration_api_call, json_result
 from .generation_types import resolve_generation_type
 from .reference import API_REFERENCE
+from .vidsheet_contract import enum_values, model_facing_fields, require_enum_value
+
+# These MCP JSON-schema enums are derived at import time from the vendored
+# Rails artifact.  Do not replace them with a hand-maintained Literal list.
+VIDSHEET_COLUMN_TYPES = enum_values("spreadsheet_column", "type")
+VIDEO_LAYER_TYPES = enum_values("video_layer", "type")
+VidsheetColumnType = Annotated[
+    str,
+    Field(
+        description="Column type accepted by Rails",
+        json_schema_extra={"enum": list(VIDSHEET_COLUMN_TYPES)},
+    ),
+]
+OptionalVidsheetColumnType = Annotated[
+    Optional[str],
+    Field(
+        default=None,
+        description="Column type accepted by Rails",
+        json_schema_extra={"enum": list(VIDSHEET_COLUMN_TYPES)},
+    ),
+]
+VideoLayerType = Annotated[
+    str,
+    Field(
+        description="Persisted video-layer type accepted by Rails",
+        json_schema_extra={"enum": list(VIDEO_LAYER_TYPES)},
+    ),
+]
+OptionalVideoLayerType = Annotated[
+    Optional[str],
+    Field(
+        default=None,
+        description="Persisted video-layer type accepted by Rails",
+        json_schema_extra={"enum": list(VIDEO_LAYER_TYPES)},
+    ),
+]
+
+# Assert the tool signatures below remain model-facing.  Rails' wire contract
+# has ``position`` for editor persistence, but models must use named reorder
+# operations with ID lists; this server derives the integer positions itself.
+model_facing_fields("spreadsheet_column", {"title", "type"})
+model_facing_fields("video_layer", {"name", "type", "additional_attributes"})
 
 mcp = FastMCP(name="gen", version="1.0.0")
 
@@ -711,38 +753,76 @@ async def gen_list_columns(
     data = await api_call("GET", f"/vidsheet/{engine_id}/columns?agent_id={agent_id}")
     return json_result(data)
 
-@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. Valid types: 'text' (scripts/prompts), 'image', 'video', 'audio'. Only 'ingredient' role columns can be created by users — system columns (video, final_video, stats) are created automatically with templates.")
+@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. The column type enum is derived from the Rails Vidsheet schema. To place it, create it first then use gen_reorder_columns; models never set raw editor positions.")
 async def gen_create_column(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     title: Annotated[str, Field(description="Column title")],
-    type: Annotated[str, Field(description="Column type: text | image | video | audio")],
-    position: Annotated[Optional[float], Field(default=None, description="Column position (0-indexed)")] = None,
+    type: VidsheetColumnType,
 ) -> str:
+    require_enum_value("spreadsheet_column", "type", type)
     body = {"agent_id": agent_id, "title": title, "type": type}
-    if position is not None:
-        body["position"] = position
     data = await api_call("POST", f"/vidsheet/{engine_id}/columns", body)
     return json_result(data)
 
-@mcp.tool(name="gen_update_column", description="Step 4 (Edit & Generate): Update a column's title, type, or position. Only ingredient-role columns can be modified.")
+@mcp.tool(name="gen_update_column", description="Step 4 (Edit & Generate): Update a column's title or type. Use gen_reorder_columns to change its order; raw editor positions are intentionally not model-facing.")
 async def gen_update_column(
     engine_id: Annotated[str, Field(description="The engine ID")],
     column_id: Annotated[str, Field(description="The column ID to update")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     title: Annotated[Optional[str], Field(default=None, description="New column title")] = None,
-    type: Annotated[Optional[str], Field(default=None, description="New column type: text | image | video | audio")] = None,
-    position: Annotated[Optional[float], Field(default=None, description="New position (0-indexed)")] = None,
+    type: OptionalVidsheetColumnType = None,
 ) -> str:
     col: dict = {}
     if title is not None:
         col["title"] = title
     if type is not None:
+        require_enum_value("spreadsheet_column", "type", type)
         col["type"] = type
-    if position is not None:
-        col["position"] = position
     body = {"agent_id": agent_id, "spreadsheet_column": col}
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/columns/{column_id}", body)
+    return json_result(data)
+
+
+def _id_to_position(ordered_ids: list[str], *, entity: str) -> dict[str, int]:
+    if not ordered_ids:
+        raise ValueError(f"{entity}_ids must contain the complete desired order")
+    if any(not item.strip() for item in ordered_ids):
+        raise ValueError(f"{entity}_ids cannot contain blank IDs")
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise ValueError(f"{entity}_ids cannot contain duplicate IDs")
+    return {item: position for position, item in enumerate(ordered_ids)}
+
+
+async def _next_layer_position(engine_id: str, cell_id: str, agent_id: str) -> int:
+    """Derive Rails' required wire position; models never choose it.
+
+    The wire schema correctly marks ``video_layer.position`` as required.  A
+    model-facing create tool owns the higher-level operation "append a layer",
+    so it reads the live cell and turns that into the next editor-track index.
+    """
+    cell = await api_call(
+        "GET", f"/vidsheet/{engine_id}/cells/{cell_id}?agent_id={agent_id}"
+    )
+    positions = [
+        layer.get("position")
+        for layer in (cell.get("video_layers") or [])
+        if isinstance(layer, dict) and isinstance(layer.get("position"), (int, float))
+    ]
+    return int(max(positions, default=-1)) + 1
+
+
+@mcp.tool(name="gen_reorder_columns", description="Step 4 (Edit & Generate): Set the complete left-to-right order of every column in a Vidsheet. Pass every column ID exactly once, including system columns. This is the model-facing replacement for Rails' raw position field.")
+async def gen_reorder_columns(
+    engine_id: Annotated[str, Field(description="The Vidsheet ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the Vidsheet")],
+    column_ids: Annotated[list[str], Field(description="Every column ID once, in desired left-to-right order")],
+) -> str:
+    data = await api_call(
+        "PATCH",
+        f"/vidsheet/{engine_id}/columns/update_positions",
+        {"agent_id": agent_id, "id_to_position": _id_to_position(column_ids, entity="column")},
+    )
     return json_result(data)
 
 @mcp.tool(name="gen_delete_column", description="Step 4 (Edit & Generate): Delete a column from a vidsheet. Only ingredient-role columns can be deleted.")
@@ -798,18 +878,22 @@ async def gen_update_cell(
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/cells/{cell_id}", {"agent_id": agent_id, "spreadsheet_cell": {"value": value}})
     return json_result(data)
 
-@mcp.tool(name="gen_create_layer", description="Step 4 (Edit & Generate): Create a new layer inside a video cell. Layers compose overlays, tracks, and clips with a position. Use additional_attributes for type-specific config.")
+@mcp.tool(name="gen_create_layer", description="Step 4 (Edit & Generate): Create a new layer inside a video cell. Layer type is derived from the Rails Vidsheet schema. Use gen_reorder_layers for editor-track order, never a raw position.")
 async def gen_create_layer(
     engine_id: Annotated[str, Field(description="The engine ID")],
     cell_id: Annotated[str, Field(description="The cell ID to add the layer to")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     name: Annotated[str, Field(description="Name of the layer")],
-    type: Annotated[str, Field(description="Type of the layer")],
-    position: Annotated[Optional[float], Field(default=None, description="Position of the layer (0-indexed)")] = None,
+    type: VideoLayerType,
 ) -> str:
-    layer: dict = {"name": name, "type": type}
-    if position is not None:
-        layer["position"] = position
+    require_enum_value("video_layer", "type", type)
+    # ``position`` is required on the Rails wire but banned from the MCP
+    # schema. Derive append order from the current editor state.
+    layer: dict = {
+        "name": name,
+        "type": type,
+        "position": await _next_layer_position(engine_id, cell_id, agent_id),
+    }
     data = await api_call("POST", f"/vidsheet/{engine_id}/cells/{cell_id}/layers", {"agent_id": agent_id, "video_layer": layer})
     return json_result(data)
 
@@ -823,28 +907,41 @@ async def gen_get_layer(
     data = await api_call("GET", f"/vidsheet/{engine_id}/cells/{cell_id}/layers/{layer_id}?agent_id={agent_id}")
     return json_result(data)
 
-@mcp.tool(name="gen_update_layer", description="Step 4 (Edit & Generate): Update a layer's name, type, position, or additional_attributes.")
+@mcp.tool(name="gen_update_layer", description="Step 4 (Edit & Generate): Update a layer's name, type, or additional attributes. Use gen_reorder_layers for editor-track order, never a raw position.")
 async def gen_update_layer(
     engine_id: Annotated[str, Field(description="The engine ID")],
     cell_id: Annotated[str, Field(description="The cell ID")],
     layer_id: Annotated[str, Field(description="The layer ID to update")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     name: Annotated[Optional[str], Field(default=None, description="New layer name")] = None,
-    type: Annotated[Optional[str], Field(default=None, description="New layer type")] = None,
-    position: Annotated[Optional[float], Field(default=None, description="New position (0-indexed)")] = None,
+    type: OptionalVideoLayerType = None,
     additional_attributes: Annotated[Optional[dict], Field(default=None, description="Additional attributes to set")] = None,
 ) -> str:
     layer_patch: dict = {}
     if name is not None:
         layer_patch["name"] = name
     if type is not None:
+        require_enum_value("video_layer", "type", type)
         layer_patch["type"] = type
-    if position is not None:
-        layer_patch["position"] = position
     if additional_attributes is not None:
         layer_patch["additional_attributes"] = additional_attributes
     body = {"agent_id": agent_id, "video_layer": layer_patch}
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/cells/{cell_id}/layers/{layer_id}", body)
+    return json_result(data)
+
+
+@mcp.tool(name="gen_reorder_layers", description="Step 4 (Edit & Generate): Set the complete editor-track order of every layer in one Vidsheet cell. Pass every layer ID exactly once, from top to bottom. This is the model-facing replacement for Rails' raw position field.")
+async def gen_reorder_layers(
+    engine_id: Annotated[str, Field(description="The Vidsheet ID")],
+    cell_id: Annotated[str, Field(description="The video cell ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the Vidsheet")],
+    layer_ids: Annotated[list[str], Field(description="Every layer ID once, in desired top-to-bottom editor order")],
+) -> str:
+    data = await api_call(
+        "PUT",
+        f"/vidsheet/{engine_id}/cells/{cell_id}/layers/update_positions",
+        {"agent_id": agent_id, "id_to_position": _id_to_position(layer_ids, entity="layer")},
+    )
     return json_result(data)
 
 @mcp.tool(name="gen_delete_layer", description="Step 4 (Edit & Generate): Delete a layer from a cell.")

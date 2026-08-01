@@ -35,3 +35,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gen_mcp_server"]
+# The hosted deploy installs a wheel from the exact git SHA. Keep the vendored
+# Rails artifact inside that wheel; otherwise source-tree tests pass while the
+# deployed MCP cannot load its contract at import time.
+include = ["src/gen_mcp_server/contracts/*.json"]
