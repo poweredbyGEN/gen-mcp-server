@@ -69,6 +69,16 @@ verify_mcp() { # $1 = port (checked on the box, loopback)
   grep -q '"serverInfo"' <<<"$body"
 }
 
+# A healthy initialize reply alone can come from an older server which knows
+# nothing about the Rails-derived Vidsheet operation contract.  Run the exact
+# package installed in the staged/active venv against the live HTTP tool list:
+# it asserts the visible enums come from the packaged artifact and raw editor
+# ordering inputs have not leaked back into model-facing MCP tools.
+verify_vidsheet_contract_surface() { # $1 = port, $2 = absolute venv path
+  local port="$1" venv="$2"
+  box "$venv/bin/python -m gen_mcp_server.hosted_contract_verify --url http://127.0.0.1:$port/mcp"
+}
+
 require_sha() {
   [[ "${SHA:-}" =~ ^[0-9a-f]{40}$ ]] || die "need --sha <full 40-char sha>"
   git -C "$REPO_DIR" fetch origin --quiet
@@ -116,9 +126,9 @@ cmd_build() {
        echo \$! > /tmp/gen-mcp-stage-smoke.pid"
   sleep 4
   local ok=0
-  verify_mcp "$STAGE_PORT" && ok=1
+  verify_mcp "$STAGE_PORT" && verify_vidsheet_contract_surface "$STAGE_PORT" "$BASE/venvs/$name" && ok=1
   box "kill \$(cat /tmp/gen-mcp-stage-smoke.pid) 2>/dev/null; rm -f /tmp/gen-mcp-stage-smoke.pid"
-  [ "$ok" = 1 ] || die "staged venv $name failed the MCP initialize handshake (see /tmp/gen-mcp-stage-smoke.log on $BOX)"
+  [ "$ok" = 1 ] || die "staged venv $name failed the MCP handshake or public Vidsheet contract check (see /tmp/gen-mcp-stage-smoke.log on $BOX)"
   echo "build: OK — $name staged and boot-verified. Activate with:"
   echo "  scripts/deploy_hosted.sh activate --sha $SHA"
 }
@@ -133,8 +143,8 @@ flip_and_verify() { # $1 = venv name to activate, $2 = name to record as previou
        ln -sfn venvs/$1 $BASE/.venv
        systemctl restart $SERVICE"
   sleep 4
-  if verify_mcp "$PORT" && box "systemctl is-active --quiet $SERVICE"; then
-    echo "OK: $SERVICE serving from venvs/$1 (verified initialize handshake on :$PORT)"
+  if verify_mcp "$PORT" && verify_vidsheet_contract_surface "$PORT" "$BASE/venvs/$1" && box "systemctl is-active --quiet $SERVICE"; then
+    echo "OK: $SERVICE serving from venvs/$1 (verified initialize handshake + public Vidsheet contract on :$PORT)"
     return 0
   fi
   echo "VERIFY FAILED for venvs/$1 — rolling back to venvs/$2" >&2
