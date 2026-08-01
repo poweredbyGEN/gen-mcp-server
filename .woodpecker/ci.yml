@@ -10,9 +10,13 @@ steps:
     commands:
       # The hosted deploy path builds a wheel from a git sha and installs it —
       # prove the package builds, installs, imports, and exposes the entrypoint.
-      - pip install --quiet .
+      - pip install --quiet . pytest
       - python -c "import gen_mcp_server"
       - gen-mcp-server --help
+      # Keep the package's behavioral regression coverage on the same
+      # Woodpecker push/PR gate as the build. The only remaining GitHub Action
+      # is release/manual PyPI publishing, never test execution.
+      - python -m pytest tests --tb=short
 
   deploy-script:
     image: python:3.12-slim
