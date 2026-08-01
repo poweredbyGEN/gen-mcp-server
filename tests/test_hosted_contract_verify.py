@@ -6,10 +6,10 @@ from copy import deepcopy
 import pytest
 
 from gen_mcp_server import server
+from gen_mcp_server import hosted_contract_verify as verifier
 from gen_mcp_server.hosted_contract_verify import (
     HostedContractVerificationError,
     assert_vidsheet_tool_surface,
-    verify,
 )
 
 
@@ -60,9 +60,9 @@ def test_verify_requires_a_session_bound_public_tools_list(monkeypatch, live_too
             return {"result": {"serverInfo": {"name": "gen"}}}, "session-123"
         return live_tools_response, None
 
-    monkeypatch.setattr("gen_mcp_server.hosted_contract_verify._jsonrpc", fake_jsonrpc)
+    monkeypatch.setattr(verifier, "_jsonrpc", fake_jsonrpc)
 
-    verify("http://127.0.0.1:8090/mcp")
+    verifier.verify("http://127.0.0.1:8090/mcp")
 
     assert calls == [
         ("http://127.0.0.1:8090/mcp", "initialize", None),
