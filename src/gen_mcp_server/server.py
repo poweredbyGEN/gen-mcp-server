@@ -9,7 +9,7 @@ from typing import Annotated, Optional
 from fastmcp import FastMCP
 from pydantic import Field
 
-from .client import api_call, agent_api_call, agent_core_api_call, form_call, integration_api_call, json_result
+from .client import api_call, agent_api_call, agent_core_api_call, form_call, gated_delete, integration_api_call, json_result
 from .generation_types import resolve_generation_type
 from .reference import API_REFERENCE
 from .vidsheet_contract import enum_values, model_facing_fields, require_enum_value
@@ -825,14 +825,17 @@ async def gen_reorder_columns(
     )
     return json_result(data)
 
-@mcp.tool(name="gen_delete_column", description="Step 4 (Edit & Generate): Delete a column from a vidsheet. Only ingredient-role columns can be deleted.")
+@mcp.tool(name="gen_delete_column", description="Step 4 (Edit & Generate): Delete a column from a vidsheet. Only ingredient-role columns can be deleted. Destructive: the first call returns a would_destroy preview plus a confirm_token; show the preview to the user, then call again with confirm_token to actually delete.")
 async def gen_delete_column(
     engine_id: Annotated[str, Field(description="The engine ID")],
     column_id: Annotated[str, Field(description="The column ID to delete")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    confirm_token: Annotated[str | None, Field(description="Single-use token from this tool's previous confirmation_required response. Omit on the first call.")] = None,
 ) -> str:
-    data = await api_call("DELETE", f"/vidsheet/{engine_id}/columns/{column_id}?agent_id={agent_id}")
-    return json_result(data)
+    path = f"/vidsheet/{engine_id}/columns/{column_id}?agent_id={agent_id}"
+    if confirm_token:
+        path = f"{path}&confirm_token={confirm_token}"
+    return await gated_delete(path)
 
 @mcp.tool(name="gen_list_rows", description="Step 4 (Edit & Generate): List all rows in a vidsheet. A row is one piece of content; cells across its columns are its ingredients and generated outputs.")
 async def gen_list_rows(
@@ -944,15 +947,18 @@ async def gen_reorder_layers(
     )
     return json_result(data)
 
-@mcp.tool(name="gen_delete_layer", description="Step 4 (Edit & Generate): Delete a layer from a cell.")
+@mcp.tool(name="gen_delete_layer", description="Step 4 (Edit & Generate): Delete a layer from a cell. Destructive: the first call returns a would_destroy preview plus a confirm_token; show the preview to the user, then call again with confirm_token to actually delete.")
 async def gen_delete_layer(
     engine_id: Annotated[str, Field(description="The engine ID")],
     cell_id: Annotated[str, Field(description="The cell ID")],
     layer_id: Annotated[str, Field(description="The layer ID to delete")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    confirm_token: Annotated[str | None, Field(description="Single-use token from this tool's previous confirmation_required response. Omit on the first call.")] = None,
 ) -> str:
-    data = await api_call("DELETE", f"/vidsheet/{engine_id}/cells/{cell_id}/layers/{layer_id}?agent_id={agent_id}")
-    return json_result(data)
+    path = f"/vidsheet/{engine_id}/cells/{cell_id}/layers/{layer_id}?agent_id={agent_id}"
+    if confirm_token:
+        path = f"{path}&confirm_token={confirm_token}"
+    return await gated_delete(path)
 
 @mcp.tool(name="gen_list_variables", description="Step 4 (Edit & Generate): Get global variables for a vidsheet. Variables are key-value pairs used for template substitution in prompts and content (e.g. {{brand_name}}).")
 async def gen_list_variables(
@@ -1872,14 +1878,17 @@ async def gen_update_variable(
     data = await api_call("PATCH", f"/vidsheet/{engine_id}/global_variables/{variable_id}?agent_id={agent_id}", body)
     return json_result(data)
 
-@mcp.tool(name="gen_delete_variable", description="Step 4 (Edit & Generate): Delete a global variable from a vidsheet.")
+@mcp.tool(name="gen_delete_variable", description="Step 4 (Edit & Generate): Delete a global variable from a vidsheet. Destructive: the first call returns a would_destroy preview plus a confirm_token; show the preview to the user, then call again with confirm_token to actually delete.")
 async def gen_delete_variable(
     engine_id: Annotated[str, Field(description="The vidsheet/engine ID")],
     variable_id: Annotated[str, Field(description="The variable ID to delete")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    confirm_token: Annotated[str | None, Field(description="Single-use token from this tool's previous confirmation_required response. Omit on the first call.")] = None,
 ) -> str:
-    data = await api_call("DELETE", f"/vidsheet/{engine_id}/global_variables/{variable_id}?agent_id={agent_id}")
-    return json_result(data)
+    path = f"/vidsheet/{engine_id}/global_variables/{variable_id}?agent_id={agent_id}"
+    if confirm_token:
+        path = f"{path}&confirm_token={confirm_token}"
+    return await gated_delete(path)
 
 # ─── Vidsheet undo / redo (change-set history) ───────────────────────────────
 # Backs the undo/redo surface: every grouped write to a vidsheet is
