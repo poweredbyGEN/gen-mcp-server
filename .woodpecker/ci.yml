@@ -26,3 +26,8 @@ steps:
       - bash -n scripts/deploy_hosted.sh
       - if bash scripts/deploy_hosted.sh; then echo "usage guard failed open"; exit 1; fi
       - if bash scripts/deploy_hosted.sh build --sha not-a-sha; then echo "sha guard failed open"; exit 1; fi
+
+# Serialize pipelines across commits so this repo cannot amplify the shared
+# GitHub status-write quota during a merge burst. Steps within one pipeline
+# remain parallel.
+concurrency: 1
