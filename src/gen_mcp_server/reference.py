@@ -52,7 +52,7 @@ Within a vidsheet:
 # The 5-Step Journey
 
 Every user of GEN — human or AI — follows the same 5-step arc. This server's
-143 tools are organized around it. **Always know which step you're in.**
+150 tools are organized around it. **Always know which step you're in.**
 
 ```
   Step 1           Step 2            Step 3             Step 4            Step 5
@@ -354,6 +354,7 @@ YouTube, and X. You can post immediately or schedule for a specific time.
 | `gen_list_scheduled_posts` | View the content calendar. |
 | `gen_get_post_status` | Poll post status — `accepted` → `publishing` → `published` or `failed`. |
 | `gen_create_recurring_job` | Set up an automated daily/weekly content job. |
+| `gen_draft_test_recurring_job` | Test an UNSAVED recurring job once before committing to save it (configure → Test → Save). Paid-media gated. |
 
 **Render the final video:**
 

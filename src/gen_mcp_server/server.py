@@ -55,7 +55,7 @@ OptionalVideoLayerType = Annotated[
 model_facing_fields("spreadsheet_column", {"title", "type"})
 model_facing_fields("video_layer", {"name", "type", "additional_attributes"})
 
-mcp = FastMCP(name="gen", version="1.0.0")
+mcp = FastMCP(name="gen", version="1.1.0")
 
 
 @mcp.resource("gen://api-reference", mime_type="text/markdown")
@@ -837,12 +837,16 @@ async def gen_delete_column(
         path = f"{path}&confirm_token={confirm_token}"
     return await gated_delete(path)
 
-@mcp.tool(name="gen_list_rows", description="Step 4 (Edit & Generate): List all rows in a vidsheet. A row is one piece of content; cells across its columns are its ingredients and generated outputs.")
+@mcp.tool(name="gen_list_rows", description="Step 4 (Edit & Generate): List all rows in a vidsheet. A row is one piece of content; cells across its columns are its ingredients and generated outputs. Pass sort_direction='desc' to return the newest rows first (useful for paginating to the most recently added content).")
 async def gen_list_rows(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    sort_direction: Annotated[Optional[str], Field(default=None, description="Row order: 'desc' returns newest rows first (position descending); omit for the default ascending order. Unrecognized values fall back to ascending.")] = None,
 ) -> str:
-    data = await api_call("GET", f"/vidsheet/{engine_id}/rows?agent_id={agent_id}")
+    qs = [f"agent_id={agent_id}"]
+    if sort_direction:
+        qs.append(f"sort_direction={sort_direction}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/rows?{'&'.join(qs)}")
     return json_result(data)
 
 @mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content.")
@@ -1453,6 +1457,28 @@ async def gen_run_recurring_job_now(
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/test-run")
     return json_result(data)
 
+@mcp.tool(name="gen_draft_test_recurring_job", description="Step 3 (Monitoring): Test an UNSAVED recurring job before committing to save it (the configure → Test → Save flow). Unlike gen_run_recurring_job_now (which rehearses an already-saved job by id), this takes the same body as gen_create_recurring_job with NO job id and runs it once as a draft. Accepts an optional job_id returned by a prior draft-test call to keep re-testing on the same draft row instead of leaving abandoned drafts. Returns 202 Accepted with a run_id you can poll via gen_get_run_status. Paid-media gated: requires paid-media access (a draft test spends real provider money, billed through the same path as a scheduled run).")
+async def gen_draft_test_recurring_job(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    job_type: Annotated[str, Field(description="Job type. Default content-ideas pipeline: 'generate_content_ideas'.")],
+    prompt: Annotated[str, Field(description="Natural-language prompt the agent would run each cycle")],
+    name: Annotated[Optional[str], Field(default=None, description="Display name. Defaults to the first 80 chars of prompt if omitted.")] = None,
+    schedule: Annotated[Optional[dict], Field(default=None, description="Schedule config (a draft test does not schedule anything; a placeholder is used if omitted), e.g. {'cadence': 'daily', 'time_of_day': '09:00', 'timezone': 'UTC'}")] = None,
+    delivery: Annotated[Optional[dict], Field(default=None, description="Delivery config, e.g. {'type': 'chat_only'} or {'type': 'email', 'email': 'user@example.com'}")] = None,
+    job_id: Annotated[Optional[str], Field(default=None, description="An existing draft's job_id (returned by a prior draft-test call) to UPDATE instead of inserting a second draft. Omit on the first test.")] = None,
+) -> str:
+    body: dict = {"job_type": job_type, "prompt": prompt}
+    if schedule is not None:
+        body["schedule"] = schedule
+    if delivery is not None:
+        body["delivery"] = delivery
+    if name is not None:
+        body["name"] = name
+    if job_id is not None:
+        body["job_id"] = job_id
+    data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/draft-test", body)
+    return json_result(data)
+
 @mcp.tool(name="gen_duplicate_recurring_job", description="Step 3 (Monitoring): Copy a recurring job to a different vidsheet. The copy inherits the source's prompt (rewritten to the new sheet), schedule, delivery settings, and actions. Returns 409 if the destination sheet already has an automation. Use when you want to run the same workflow on a different sheet without rebuilding it from scratch.")
 async def gen_duplicate_recurring_job(
     agent_id: Annotated[str, Field(description="The agent ID")],
@@ -1644,9 +1670,12 @@ async def gen_delete_scheduled_post(
 
 _IMAGE_VERSIONS = ["nano-banana", "nano-banana-pro", "nano-banana-2"]
 _VIDEO_MODELS = [
-    "seedance-1.0-lite", "seedance-1.0-pro", "seedance-1.5-pro", "seedance-2.0",
+    "seedance-1.0-lite", "seedance-1.0-pro", "seedance-1.5-pro", "seedance-2.0", "seedance-2.5",
     "veo_3", "veo_3_1", "kling_2_1", "kling_2_6", "sora_2", "pika", "grok",
 ]
+# seedance-2.5 only renders at 480p/720p (1080p is rejected by the provider);
+# coerce any higher/default resolution down to its default 720p.
+_SEEDANCE_25_RESOLUTIONS = ["480p", "720p"]
 _SONG_MODELS = ["suno-v5-beta", "suno-v4.5plus-beta"]
 
 @mcp.tool(name="gen_create_image", description="Step 4 (Edit & Generate): Generate an image from a text prompt. version selects the image model: 'nano-banana-pro' (highest quality, default), 'nano-banana' (fast), 'nano-banana-2' (balanced). aspect_ratio: 1:1 | 9:16 | 16:9. Pass reference_images (public URLs) for image-to-image identity-preserving generation (same face/product in a new scene). Paid — returns a generation_id to poll with gen_get_generation.")
@@ -1707,29 +1736,35 @@ async def gen_create_look(
     result = await api_call("POST", "/user_jobs", body)
     return json_result(result)
 
-@mcp.tool(name="gen_create_video", description="Step 4 (Edit & Generate): Generate one raw video clip from a text prompt. model: seedance-2.0 (default) | seedance-1.0-lite/1.0-pro/1.5-pro | veo_3 | veo_3_1 | kling_2_1 | kling_2_6 | sora_2 | pika | grok. resolution: 1080p (default) | 720p. Seedance 2.0 supports duration 4-15s. Paid — returns a generation_id to poll with gen_get_generation. For a complete multi-scene video from a brief, use gen_chat instead.")
+@mcp.tool(name="gen_create_video", description="Step 4 (Edit & Generate): Generate one raw video clip from a text prompt. model: seedance-2.0 (default) | seedance-1.0-lite/1.0-pro/1.5-pro | seedance-2.5 | veo_3 | veo_3_1 | kling_2_1 | kling_2_6 | sora_2 | pika | grok. resolution: 1080p (default) | 720p | 480p — NOTE seedance-2.5 only supports 480p/720p (1080p is coerced to 720p). Seedance 2.0/2.5 support duration 4-15s. Paid — returns a generation_id to poll with gen_get_generation. For a complete multi-scene video from a brief, use gen_chat instead.")
 async def gen_create_video(
     agent_id: Annotated[str, Field(description="The agent ID")],
     prompt: Annotated[str, Field(description="Video generation prompt")],
     model: Annotated[Optional[str], Field(default=None, description="Video model (default: seedance-2.0)")] = None,
     aspect_ratio: Annotated[Optional[str], Field(default=None, description="Aspect ratio: 16:9 (default) | 9:16 | 1:1")] = None,
-    resolution: Annotated[Optional[str], Field(default=None, description="Resolution: 1080p (default) | 720p")] = None,
-    duration: Annotated[Optional[int], Field(default=None, description="Duration in seconds (default 5; seedance-2.0 supports 4-15)")] = None,
+    resolution: Annotated[Optional[str], Field(default=None, description="Resolution: 1080p (default) | 720p | 480p. seedance-2.5 only supports 480p/720p; 1080p is coerced to 720p.")] = None,
+    duration: Annotated[Optional[int], Field(default=None, description="Duration in seconds (default 5; seedance-2.0/2.5 support 4-15)")] = None,
     native_audio: Annotated[Optional[bool], Field(default=None, description="Request model-native audio where supported (default false)")] = None,
 ) -> str:
     import json as _json
     m = model if model in _VIDEO_MODELS else "seedance-2.0"
-    if m == "seedance-2.0":
+    if m == "seedance-2.5":
+        job_type = "seedance_2_5_video_generation"
+    elif m == "seedance-2.0":
         job_type = "seedance_2_0_video_generation"
     elif m == "grok":
         job_type = "grok_video_generation"
     else:
         job_type = "seedance_video_generation"
+    # seedance-2.5 rejects 1080p; coerce to its default 720p.
+    eff_resolution = resolution or "1080p"
+    if m == "seedance-2.5" and eff_resolution not in _SEEDANCE_25_RESOLUTIONS:
+        eff_resolution = "720p"
     data_body: dict = {
         "model": m,
         "prompt": prompt,
         "aspect_ratio": aspect_ratio or "16:9",
-        "resolution": resolution or "1080p",
+        "resolution": eff_resolution,
         "duration": duration or 5,
         "native_audio": native_audio or False,
     }
