@@ -52,7 +52,7 @@ Within a vidsheet:
 # The 5-Step Journey
 
 Every user of GEN — human or AI — follows the same 5-step arc. This server's
-150 tools are organized around it. **Always know which step you're in.**
+152 tools are organized around it. **Always know which step you're in.**
 
 ```
   Step 1           Step 2            Step 3             Step 4            Step 5

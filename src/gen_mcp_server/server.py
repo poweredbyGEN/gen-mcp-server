@@ -1495,6 +1495,31 @@ async def gen_duplicate_recurring_job(
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/duplicate", body)
     return json_result(data)
 
+@mcp.tool(name="gen_list_recurring_job_runs", description="Step 3 (Monitoring): List the newest-first run history of a recurring job (the activity log for an automation). Each entry is one past execution with its status, timing, and outcome summary. Use this to inspect what a daily/weekly task actually produced, diagnose a run that failed or produced nothing, or page back through recent activity. For a SINGLE run's full step-by-step trace and final answer, use gen_get_recurring_job_run. Returns 404 if the job does not exist.")
+async def gen_list_recurring_job_runs(
+    agent_id: Annotated[str, Field(description="The agent ID that owns the recurring job")],
+    job_id: Annotated[str, Field(description="The recurring job id")],
+    limit: Annotated[Optional[int], Field(default=None, description="Max runs to return (1-100, default 20)")] = None,
+    offset: Annotated[Optional[int], Field(default=None, description="Number of runs to skip for pagination (default 0)")] = None,
+) -> str:
+    qs: list[str] = []
+    if limit is not None:
+        qs.append(f"limit={limit}")
+    if offset is not None:
+        qs.append(f"offset={offset}")
+    query = ("?" + "&".join(qs)) if qs else ""
+    data = await agent_api_call("GET", f"/agents/{agent_id}/recurring-jobs/{job_id}/runs{query}")
+    return json_result(data)
+
+@mcp.tool(name="gen_get_recurring_job_run", description="Step 3 (Monitoring): Get ONE run of a recurring job in full — its status, the step-by-step tool-call trace, and the final assistant answer. Use this to drill into a single run surfaced by gen_list_recurring_job_runs (e.g. a run marked failed or that returned unexpected output). Returns 404 if the job or run does not exist.")
+async def gen_get_recurring_job_run(
+    agent_id: Annotated[str, Field(description="The agent ID that owns the recurring job")],
+    job_id: Annotated[str, Field(description="The recurring job id")],
+    run_id: Annotated[str, Field(description="The run id (from gen_list_recurring_job_runs or the run_id returned by gen_run_recurring_job_now / gen_draft_test_recurring_job)")],
+) -> str:
+    data = await agent_api_call("GET", f"/agents/{agent_id}/recurring-jobs/{job_id}/runs/{run_id}")
+    return json_result(data)
+
 # ─── Billing ──────────────────────────────────────────────────────────────────
 
 @mcp.tool(name="gen_get_credit_balance", description="Step 5 (Export & Publish): Get the agent's available credit balance. Check this before paid operations (generate, render, publish) to confirm the workspace has usable credits.")
