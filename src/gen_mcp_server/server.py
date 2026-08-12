@@ -1769,6 +1769,39 @@ async def gen_create_song(
     result = await api_call("POST", "/user_jobs", body)
     return json_result(result)
 
+@mcp.tool(name="gen_transcribe", description="Step 4 (Edit & Generate): Transcribe audio or video into text with per-sentence timestamps. Pass EXACTLY ONE source: audio_url (public audio URL) | video_url (public video URL; audio extracted server-side, a video with no audio track fails with a clear error) | content_resource_id (a file already in the agent's GEN content resources). Optional trim_start_seconds + trim_duration_seconds transcribe only a window and must be given together (not supported with content_resource_id). Asynchronous: returns {generation_id, status} — poll gen_get_generation until completed; the result carries full_text (whole transcript), sentences ([{text, startMs, endMs}] for subtitle/timestamp use), and audio_duration. Paid — credits scale with audio duration; out of credits returns error_code insufficient_credits_for_job.")
+async def gen_transcribe(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    audio_url: Annotated[Optional[str], Field(default=None, description="Public URL to an audio file to transcribe")] = None,
+    video_url: Annotated[Optional[str], Field(default=None, description="Public URL to a video; its audio track is extracted and transcribed")] = None,
+    content_resource_id: Annotated[Optional[str], Field(default=None, description="ID of an existing GEN content resource to transcribe")] = None,
+    trim_start_seconds: Annotated[Optional[float], Field(default=None, description="Start of the window to transcribe (seconds); requires trim_duration_seconds")] = None,
+    trim_duration_seconds: Annotated[Optional[float], Field(default=None, description="Length of the window to transcribe (seconds); requires trim_start_seconds")] = None,
+) -> str:
+    sources = [n for n, v in (("audio_url", audio_url), ("video_url", video_url), ("content_resource_id", content_resource_id)) if v]
+    if len(sources) != 1:
+        got = f"; got {', '.join(sources)}" if sources else ""
+        return json_result({"ok": False, "error": f"Provide exactly one of audio_url, video_url, or content_resource_id{got}.", "error_code": "validation_error"})
+    if content_resource_id:
+        # The content-resource validator branch has no trim support.
+        if trim_start_seconds is not None or trim_duration_seconds is not None:
+            return json_result({"ok": False, "error": "trim is not supported with content_resource_id.", "error_code": "validation_error"})
+        data_body: dict = {"content_resource_id": content_resource_id}
+    else:
+        key = "audio" if audio_url else "video"
+        data_body = {key: {"value": audio_url or video_url}}
+        if trim_start_seconds is not None or trim_duration_seconds is not None:
+            # The backend schema requires BOTH bounds; catch a half-specified trim
+            # locally instead of reserving credits for a 422.
+            if trim_start_seconds is None or trim_duration_seconds is None:
+                return json_result({"ok": False, "error": "trim requires both trim_start_seconds and trim_duration_seconds.", "error_code": "validation_error"})
+            if float(trim_start_seconds) < 0 or float(trim_duration_seconds) <= 0:
+                return json_result({"ok": False, "error": "trim_start_seconds must be >= 0 and trim_duration_seconds must be > 0.", "error_code": "validation_error"})
+            data_body["trim"] = {"start_seconds": float(trim_start_seconds), "duration_seconds": float(trim_duration_seconds)}
+    body = {"agent_id": agent_id, "data": data_body}
+    result = await api_call("POST", "/transcriptions", body)
+    return json_result(result)
+
 @mcp.tool(name="gen_estimate_job", description="Step 4 (Edit & Generate): Estimate the credit cost of one or more generation jobs BEFORE running them. Free to call. Pair with gen_get_credit_balance to check affordability before a paid run.")
 async def gen_estimate_job(
     agent_id: Annotated[str, Field(description="The agent ID")],
