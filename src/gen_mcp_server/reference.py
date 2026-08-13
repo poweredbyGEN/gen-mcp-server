@@ -52,7 +52,7 @@ Within a vidsheet:
 # The 5-Step Journey
 
 Every user of GEN — human or AI — follows the same 5-step arc. This server's
-152 tools are organized around it. **Always know which step you're in.**
+153 tools are organized around it. **Always know which step you're in.**
 
 ```
   Step 1           Step 2            Step 3             Step 4            Step 5
@@ -271,6 +271,7 @@ tracks, and clips. Every generation returns a `generation_id` you poll until
 | `gen_create_row` / `gen_duplicate_row` | Add or duplicate rows for batch production. |
 | `gen_import_asset_from_url` | Import a YouTube/TikTok/Instagram/direct URL as an asset. |
 | `gen_create_direct_upload` | Get a pre-signed URL for large file uploads (>50 MB). |
+| `gen_transcribe` | Standalone audio/video → text transcript with timestamps. Exactly one of `audio_url`/`video_url`/`content_resource_id`. Billed by duration. |
 | `gen_estimate_job` | Check the credit cost BEFORE triggering a paid generation. |
 
 **Generation types and models:**
