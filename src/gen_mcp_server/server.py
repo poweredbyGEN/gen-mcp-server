@@ -753,16 +753,18 @@ async def gen_list_columns(
     data = await api_call("GET", f"/vidsheet/{engine_id}/columns?agent_id={agent_id}")
     return json_result(data)
 
-@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. The column type enum is derived from the Rails Vidsheet schema. To place it, create it first then use gen_reorder_columns; models never set raw editor positions.")
+@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. The column type enum is derived from the Rails Vidsheet schema. To place it, create it first then use gen_reorder_columns; models never set raw editor positions. Pass idempotency_key to make the create safely retryable: a retried call with the same key returns the originally created column instead of creating a duplicate.")
 async def gen_create_column(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     title: Annotated[str, Field(description="Column title")],
     type: VidsheetColumnType,
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created column (marked replayed) instead of creating a duplicate. Recommended whenever a create might be retried.")] = None,
 ) -> str:
     require_enum_value("spreadsheet_column", "type", type)
     body = {"agent_id": agent_id, "title": title, "type": type}
-    data = await api_call("POST", f"/vidsheet/{engine_id}/columns", body)
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/columns", body, extra_headers=headers)
     return json_result(data)
 
 @mcp.tool(name="gen_update_column", description="Step 4 (Edit & Generate): Update a column's title or type. Use gen_reorder_columns to change its order; raw editor positions are intentionally not model-facing.")
@@ -849,21 +851,25 @@ async def gen_list_rows(
     data = await api_call("GET", f"/vidsheet/{engine_id}/rows?{'&'.join(qs)}")
     return json_result(data)
 
-@mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content.")
+@mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content. Pass idempotency_key to make the create safely retryable: a retried call with the same key returns the originally created row instead of creating a duplicate.")
 async def gen_create_row(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created row (marked replayed) instead of creating a duplicate. Recommended whenever a create might be retried.")] = None,
 ) -> str:
-    data = await api_call("POST", f"/vidsheet/{engine_id}/rows", {"agent_id": agent_id})
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/rows", {"agent_id": agent_id}, extra_headers=headers)
     return json_result(data)
 
-@mcp.tool(name="gen_duplicate_row", description="Step 4 (Edit & Generate): Duplicate an existing row, including its ingredient cell values. Useful for batch-generating variants from a known-good row.")
+@mcp.tool(name="gen_duplicate_row", description="Step 4 (Edit & Generate): Duplicate an existing row, including its ingredient cell values. Useful for batch-generating variants from a known-good row. Pass idempotency_key to make the duplicate safely retryable: a retried call with the same key returns the originally created copy instead of creating a second duplicate.")
 async def gen_duplicate_row(
     engine_id: Annotated[str, Field(description="The engine ID")],
     row_id: Annotated[str, Field(description="The row ID to duplicate")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created copy (marked replayed) instead of duplicating again. Recommended whenever the duplicate might be retried.")] = None,
 ) -> str:
-    data = await api_call("POST", f"/vidsheet/{engine_id}/rows/{row_id}/duplicate", {"agent_id": agent_id})
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/rows/{row_id}/duplicate", {"agent_id": agent_id}, extra_headers=headers)
     return json_result(data)
 
 @mcp.tool(name="gen_get_cell", description="Step 4 (Edit & Generate): Get the value and metadata of a specific cell, including any layers, generations, and attached content resources.")
@@ -1538,6 +1544,11 @@ async def gen_get_credit_usage(
     if page is not None:
         path += f"&page={page}"
     data = await api_call("GET", path)
+    return json_result(data)
+
+@mcp.tool(name="gen_list_subscriptions", description="Step 5 (Export & Publish): List the user's active credit subscriptions across every workspace they own — plan name, price, billing cycle, status (ACTIVE first), and seat count. Read-only, user-scoped (no agent_id). Use it to answer 'which workspaces have an active plan?' or to find the organization_id a billing question is about. Read-only and local-only: it does not create Stripe manage links or charge anything.")
+async def gen_list_subscriptions() -> str:
+    data = await api_call("GET", "/billing/subscriptions")
     return json_result(data)
 
 @mcp.tool(name="gen_list_credit_plans", description="Step 5 (Export & Publish): List available credit and subscription plans. Use before gen_buy_credits to show the user their options.")

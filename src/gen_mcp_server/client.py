@@ -103,18 +103,22 @@ async def _call(
     path: str,
     body: Any | None = None,
     params: dict[str, Any] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> Any:
     pat = _resolve_pat()
     url = f"{base}{path}"
+    headers = {
+        "X-API-Key": pat,
+        "Content-Type": "application/json",
+        "X-Client": "gen-mcp-server",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     async with httpx.AsyncClient(timeout=120.0) as http:
         res = await http.request(
             method,
             url,
-            headers={
-                "X-API-Key": pat,
-                "Content-Type": "application/json",
-                "X-Client": "gen-mcp-server",
-            },
+            headers=headers,
             params=params,
             content=json.dumps(body) if body is not None else None,
         )
@@ -141,9 +145,14 @@ async def _call(
     return data
 
 
-async def api_call(method: str, path: str, body: Any | None = None) -> Any:
+async def api_call(
+    method: str,
+    path: str,
+    body: Any | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> Any:
     """Rails content engine — api.gen.pro/v1."""
-    return await _call(BASE_URL, method, path, body)
+    return await _call(BASE_URL, method, path, body, extra_headers=extra_headers)
 
 
 async def form_call(method: str, path: str, form: dict[str, str]) -> Any:
