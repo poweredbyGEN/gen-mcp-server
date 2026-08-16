@@ -851,6 +851,21 @@ async def gen_list_rows(
     data = await api_call("GET", f"/vidsheet/{engine_id}/rows?{'&'.join(qs)}")
     return json_result(data)
 
+@mcp.tool(name="gen_list_rows_delta", description="Step 4 (Edit & Generate): Poll a vidsheet for only the rows that CHANGED since a cursor — the efficient alternative to re-calling gen_list_rows on every tick when watching a busy sheet (e.g. while generations run). Omit updated_since on the first call to get a full snapshot plus a cursor, then pass the returned cursor back as updated_since on every later poll. Response fields: rows (only the changed rows, same shape as gen_list_rows), row_ids (the FULL surviving row-id set for the sheet — reconcile deletions by dropping any cached id absent from it), and cursor (the value to pass next time; it never advances past rows that were actually delivered, so nothing is lost when a page is clipped by page_size, capped at 100). A 'change' covers cell edits, generation/job status transitions, and layer writes. An unparseable updated_since returns 422 invalid_cursor.")
+async def gen_list_rows_delta(
+    engine_id: Annotated[str, Field(description="The engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    updated_since: Annotated[Optional[str], Field(default=None, description="ISO8601 cursor from a previous call's `cursor` field. Omit on the first call to get a full snapshot plus the initial cursor.")] = None,
+    page_size: Annotated[Optional[int], Field(default=None, description="Max changed rows to return per call (1-100, default 100). When more rows changed than fit, the cursor only advances past the rows actually delivered.")] = None,
+) -> str:
+    qs = [f"agent_id={agent_id}"]
+    if updated_since:
+        qs.append(f"updated_since={updated_since}")
+    if page_size is not None:
+        qs.append(f"page_size={page_size}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/rows/delta?{'&'.join(qs)}")
+    return json_result(data)
+
 @mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content. Pass idempotency_key to make the create safely retryable: a retried call with the same key returns the originally created row instead of creating a duplicate.")
 async def gen_create_row(
     engine_id: Annotated[str, Field(description="The engine ID")],
@@ -879,6 +894,19 @@ async def gen_get_cell(
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
 ) -> str:
     data = await api_call("GET", f"/vidsheet/{engine_id}/cells/{cell_id}?agent_id={agent_id}")
+    return json_result(data)
+
+@mcp.tool(name="gen_list_cell_jobs", description="Step 4 (Edit & Generate): Fetch the generation/job history for ONE cell — or one of its video layers via video_layer_id — on demand, without pulling the whole row payload. Returns a bare array of that container's past jobs (status, timing, outputs). Use it to see what a cell has actually run (e.g. after gen_generate_content) or to drill into why a generation failed. Returns 404 if the cell (or the video_layer_id) does not exist on this engine.")
+async def gen_list_cell_jobs(
+    engine_id: Annotated[str, Field(description="The engine ID")],
+    cell_id: Annotated[str, Field(description="The cell ID whose job history to fetch")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    video_layer_id: Annotated[Optional[str], Field(default=None, description="Narrow the history to one video layer of the cell instead of the whole cell. The layer must belong to this cell.")] = None,
+) -> str:
+    qs = [f"agent_id={agent_id}"]
+    if video_layer_id:
+        qs.append(f"video_layer_id={video_layer_id}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/cells/{cell_id}/user_jobs?{'&'.join(qs)}")
     return json_result(data)
 
 @mcp.tool(name="gen_update_cell", description="Step 4 (Edit & Generate): Update the value of a specific cell. Use on ingredient cells to set scripts, prompts, or reference values before triggering generation.")
@@ -1461,6 +1489,18 @@ async def gen_run_recurring_job_now(
     job_id: Annotated[str, Field(description="The recurring job id")],
 ) -> str:
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/test-run")
+    return json_result(data)
+
+@mcp.tool(name="gen_preview_recurring_job_prompt", description="Step 3 (Monitoring): Parse a recurring-job PROMPT into the row strategy and actions that saving it would configure — WITHOUT saving anything (the configure → Preview → Test → Save flow). Free and read-only (no LLM call, no credits). Use it to check what a prompt implies before gen_create_recurring_job, or pass existing_actions to diff a proposal against what is already configured: the response says would_apply=false when your existing actions would stand (a save proposes, your configuration wins). Its `unresolved` list names prompt phrasing the parser could not bind — fix those before saving. Follow with gen_draft_test_recurring_job to rehearse the actual run.")
+async def gen_preview_recurring_job_prompt(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    prompt: Annotated[str, Field(description="The recurring-job prompt to parse (1-20000 chars), e.g. 'Generate 5 TikTok content ideas for my skincare brand'")],
+    existing_actions: Annotated[Optional[list], Field(default=None, description="The actions you already have configured (as returned by gen_get_recurring_job), so the response can report whether saving this prompt would actually change anything. Never stored, never merged.")] = None,
+) -> str:
+    body: dict = {"prompt": prompt}
+    if existing_actions is not None:
+        body["existing_actions"] = existing_actions
+    data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/preview-parse", body)
     return json_result(data)
 
 @mcp.tool(name="gen_draft_test_recurring_job", description="Step 3 (Monitoring): Test an UNSAVED recurring job before committing to save it (the configure → Test → Save flow). Unlike gen_run_recurring_job_now (which rehearses an already-saved job by id), this takes the same body as gen_create_recurring_job with NO job id and runs it once as a draft. Accepts an optional job_id returned by a prior draft-test call to keep re-testing on the same draft row instead of leaving abandoned drafts. Returns 202 Accepted with a run_id you can poll via gen_get_run_status. Paid-media gated: requires paid-media access (a draft test spends real provider money, billed through the same path as a scheduled run).")
