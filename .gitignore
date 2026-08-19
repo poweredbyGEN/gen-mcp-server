@@ -16,3 +16,6 @@ src/graphify-out/
 __pycache__/
 *.egg-info/
 dist/
+
+# api-sync operational reports (internal — never commit; canonical copy in /var/log/gen-api-sync/)
+.api-sync-reports/

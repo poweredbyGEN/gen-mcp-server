@@ -1,6 +1,6 @@
 [project]
 name = "gen-mcp-server"
-version = "1.0.0"
+version = "1.2.0"
 description = "DEPRECATED — the official GEN MCP is the hosted server at https://mcp.gen.pro (Authorization: Bearer <gen_PAT>). This is the FINAL PyPI release; no further versions will be published."
 readme = "README.md"
 requires-python = ">=3.10"

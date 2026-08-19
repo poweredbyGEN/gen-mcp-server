@@ -52,7 +52,7 @@ Within a vidsheet:
 # The 5-Step Journey
 
 Every user of GEN — human or AI — follows the same 5-step arc. This server's
-143 tools are organized around it. **Always know which step you're in.**
+157 tools are organized around it. **Always know which step you're in.**
 
 ```
   Step 1           Step 2            Step 3             Step 4            Step 5
@@ -261,16 +261,19 @@ tracks, and clips. Every generation returns a `generation_id` you poll until
 | Tool | When to use |
 |---|---|
 | `gen_get_engine` | Read the full engine (columns, rows, cells) before editing. |
+| `gen_list_rows_delta` | Poll only the rows that CHANGED since a cursor while watching a busy sheet; `row_ids` + `cursor` drive deletion reconciliation. |
 | `gen_update_cell` | Set a cell value directly (text, prompt, etc.). |
 | `gen_generate_content` | **Workhorse.** Trigger AI generation for a cell. Returns `generation_id`. |
 | `gen_generate_layer` | Trigger AI generation for a specific layer within a video cell. |
 | `gen_get_generation` | Poll generation status every 5s until `completed`. |
+| `gen_list_cell_jobs` | Fetch one cell's (or one video layer's) generation/job history without pulling the whole row. |
 | `gen_stop_generation` | Stop a running generation (refunds credits). |
 | `gen_continue_generation` | Resume a stopped generation (re-charges credits). |
 | `gen_create_layer` / `gen_update_layer` | Compose video layers inside a cell. |
-| `gen_create_row` / `gen_duplicate_row` | Add or duplicate rows for batch production. |
+| `gen_create_row` / `gen_duplicate_row` | Add or duplicate rows for batch production. Pass `idempotency_key` so a retried call replays the original result instead of creating a duplicate. |
 | `gen_import_asset_from_url` | Import a YouTube/TikTok/Instagram/direct URL as an asset. |
 | `gen_create_direct_upload` | Get a pre-signed URL for large file uploads (>50 MB). |
+| `gen_transcribe` | Standalone audio/video → text transcript with timestamps. Exactly one of `audio_url`/`video_url`/`content_resource_id`. Billed by duration. |
 | `gen_estimate_job` | Check the credit cost BEFORE triggering a paid generation. |
 
 **Generation types and models:**
@@ -354,6 +357,8 @@ YouTube, and X. You can post immediately or schedule for a specific time.
 | `gen_list_scheduled_posts` | View the content calendar. |
 | `gen_get_post_status` | Poll post status — `accepted` → `publishing` → `published` or `failed`. |
 | `gen_create_recurring_job` | Set up an automated daily/weekly content job. |
+| `gen_preview_recurring_job_prompt` | Parse a recurring-job prompt into the row strategy/actions it implies — WITHOUT saving (free, read-only). Check before saving, or diff against existing actions. |
+| `gen_draft_test_recurring_job` | Test an UNSAVED recurring job once before committing to save it (configure → Test → Save). Paid-media gated. |
 
 **Render the final video:**
 
@@ -426,6 +431,8 @@ Credits are consumed by every paid operation (generations, research, rendering).
 The server flags `insufficient_credits: true` when a call fails due to low
 balance. Use `gen_get_credit_balance` to check and `gen_buy_credits` to add
 more (confirmation-gated). Use `gen_estimate_job` before expensive generations.
+`gen_list_subscriptions` shows the user's active plans across their workspaces
+(ACTIVE first).
 
 Standard error shape:
 ```json

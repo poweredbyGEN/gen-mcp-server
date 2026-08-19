@@ -55,7 +55,7 @@ OptionalVideoLayerType = Annotated[
 model_facing_fields("spreadsheet_column", {"title", "type"})
 model_facing_fields("video_layer", {"name", "type", "additional_attributes"})
 
-mcp = FastMCP(name="gen", version="1.0.0")
+mcp = FastMCP(name="gen", version="1.1.0")
 
 
 @mcp.resource("gen://api-reference", mime_type="text/markdown")
@@ -753,16 +753,18 @@ async def gen_list_columns(
     data = await api_call("GET", f"/vidsheet/{engine_id}/columns?agent_id={agent_id}")
     return json_result(data)
 
-@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. The column type enum is derived from the Rails Vidsheet schema. To place it, create it first then use gen_reorder_columns; models never set raw editor positions.")
+@mcp.tool(name="gen_create_column", description="Step 4 (Edit & Generate): Create a new ingredient column in a vidsheet. The column type enum is derived from the Rails Vidsheet schema. To place it, create it first then use gen_reorder_columns; models never set raw editor positions. Pass idempotency_key to make the create safely retryable: a retried call with the same key returns the originally created column instead of creating a duplicate.")
 async def gen_create_column(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
     title: Annotated[str, Field(description="Column title")],
     type: VidsheetColumnType,
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created column (marked replayed) instead of creating a duplicate. Recommended whenever a create might be retried.")] = None,
 ) -> str:
     require_enum_value("spreadsheet_column", "type", type)
     body = {"agent_id": agent_id, "title": title, "type": type}
-    data = await api_call("POST", f"/vidsheet/{engine_id}/columns", body)
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/columns", body, extra_headers=headers)
     return json_result(data)
 
 @mcp.tool(name="gen_update_column", description="Step 4 (Edit & Generate): Update a column's title or type. Use gen_reorder_columns to change its order; raw editor positions are intentionally not model-facing.")
@@ -837,29 +839,52 @@ async def gen_delete_column(
         path = f"{path}&confirm_token={confirm_token}"
     return await gated_delete(path)
 
-@mcp.tool(name="gen_list_rows", description="Step 4 (Edit & Generate): List all rows in a vidsheet. A row is one piece of content; cells across its columns are its ingredients and generated outputs.")
+@mcp.tool(name="gen_list_rows", description="Step 4 (Edit & Generate): List all rows in a vidsheet. A row is one piece of content; cells across its columns are its ingredients and generated outputs. Pass sort_direction='desc' to return the newest rows first (useful for paginating to the most recently added content).")
 async def gen_list_rows(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    sort_direction: Annotated[Optional[str], Field(default=None, description="Row order: 'desc' returns newest rows first (position descending); omit for the default ascending order. Unrecognized values fall back to ascending.")] = None,
 ) -> str:
-    data = await api_call("GET", f"/vidsheet/{engine_id}/rows?agent_id={agent_id}")
+    qs = [f"agent_id={agent_id}"]
+    if sort_direction:
+        qs.append(f"sort_direction={sort_direction}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/rows?{'&'.join(qs)}")
     return json_result(data)
 
-@mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content.")
+@mcp.tool(name="gen_list_rows_delta", description="Step 4 (Edit & Generate): Poll a vidsheet for only the rows that CHANGED since a cursor — the efficient alternative to re-calling gen_list_rows on every tick when watching a busy sheet (e.g. while generations run). Omit updated_since on the first call to get a full snapshot plus a cursor, then pass the returned cursor back as updated_since on every later poll. Response fields: rows (only the changed rows, same shape as gen_list_rows), row_ids (the FULL surviving row-id set for the sheet — reconcile deletions by dropping any cached id absent from it), and cursor (the value to pass next time; it never advances past rows that were actually delivered, so nothing is lost when a page is clipped by page_size, capped at 100). A 'change' covers cell edits, generation/job status transitions, and layer writes. An unparseable updated_since returns 422 invalid_cursor.")
+async def gen_list_rows_delta(
+    engine_id: Annotated[str, Field(description="The engine ID")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    updated_since: Annotated[Optional[str], Field(default=None, description="ISO8601 cursor from a previous call's `cursor` field. Omit on the first call to get a full snapshot plus the initial cursor.")] = None,
+    page_size: Annotated[Optional[int], Field(default=None, description="Max changed rows to return per call (1-100, default 100). When more rows changed than fit, the cursor only advances past the rows actually delivered.")] = None,
+) -> str:
+    qs = [f"agent_id={agent_id}"]
+    if updated_since:
+        qs.append(f"updated_since={updated_since}")
+    if page_size is not None:
+        qs.append(f"page_size={page_size}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/rows/delta?{'&'.join(qs)}")
+    return json_result(data)
+
+@mcp.tool(name="gen_create_row", description="Step 4 (Edit & Generate): Create a new row in a vidsheet. Each row is one piece of content. Pass idempotency_key to make the create safely retryable: a retried call with the same key returns the originally created row instead of creating a duplicate.")
 async def gen_create_row(
     engine_id: Annotated[str, Field(description="The engine ID")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created row (marked replayed) instead of creating a duplicate. Recommended whenever a create might be retried.")] = None,
 ) -> str:
-    data = await api_call("POST", f"/vidsheet/{engine_id}/rows", {"agent_id": agent_id})
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/rows", {"agent_id": agent_id}, extra_headers=headers)
     return json_result(data)
 
-@mcp.tool(name="gen_duplicate_row", description="Step 4 (Edit & Generate): Duplicate an existing row, including its ingredient cell values. Useful for batch-generating variants from a known-good row.")
+@mcp.tool(name="gen_duplicate_row", description="Step 4 (Edit & Generate): Duplicate an existing row, including its ingredient cell values. Useful for batch-generating variants from a known-good row. Pass idempotency_key to make the duplicate safely retryable: a retried call with the same key returns the originally created copy instead of creating a second duplicate.")
 async def gen_duplicate_row(
     engine_id: Annotated[str, Field(description="The engine ID")],
     row_id: Annotated[str, Field(description="The row ID to duplicate")],
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    idempotency_key: Annotated[Optional[str], Field(default=None, description="Optional Idempotency-Key: re-calling with the same key within 24h returns the originally created copy (marked replayed) instead of duplicating again. Recommended whenever the duplicate might be retried.")] = None,
 ) -> str:
-    data = await api_call("POST", f"/vidsheet/{engine_id}/rows/{row_id}/duplicate", {"agent_id": agent_id})
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    data = await api_call("POST", f"/vidsheet/{engine_id}/rows/{row_id}/duplicate", {"agent_id": agent_id}, extra_headers=headers)
     return json_result(data)
 
 @mcp.tool(name="gen_get_cell", description="Step 4 (Edit & Generate): Get the value and metadata of a specific cell, including any layers, generations, and attached content resources.")
@@ -869,6 +894,19 @@ async def gen_get_cell(
     agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
 ) -> str:
     data = await api_call("GET", f"/vidsheet/{engine_id}/cells/{cell_id}?agent_id={agent_id}")
+    return json_result(data)
+
+@mcp.tool(name="gen_list_cell_jobs", description="Step 4 (Edit & Generate): Fetch the generation/job history for ONE cell — or one of its video layers via video_layer_id — on demand, without pulling the whole row payload. Returns a bare array of that container's past jobs (status, timing, outputs). Use it to see what a cell has actually run (e.g. after gen_generate_content) or to drill into why a generation failed. Returns 404 if the cell (or the video_layer_id) does not exist on this engine.")
+async def gen_list_cell_jobs(
+    engine_id: Annotated[str, Field(description="The engine ID")],
+    cell_id: Annotated[str, Field(description="The cell ID whose job history to fetch")],
+    agent_id: Annotated[str, Field(description="The agent ID that owns the engine")],
+    video_layer_id: Annotated[Optional[str], Field(default=None, description="Narrow the history to one video layer of the cell instead of the whole cell. The layer must belong to this cell.")] = None,
+) -> str:
+    qs = [f"agent_id={agent_id}"]
+    if video_layer_id:
+        qs.append(f"video_layer_id={video_layer_id}")
+    data = await api_call("GET", f"/vidsheet/{engine_id}/cells/{cell_id}/user_jobs?{'&'.join(qs)}")
     return json_result(data)
 
 @mcp.tool(name="gen_update_cell", description="Step 4 (Edit & Generate): Update the value of a specific cell. Use on ingredient cells to set scripts, prompts, or reference values before triggering generation.")
@@ -1453,6 +1491,40 @@ async def gen_run_recurring_job_now(
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/test-run")
     return json_result(data)
 
+@mcp.tool(name="gen_preview_recurring_job_prompt", description="Step 3 (Monitoring): Parse a recurring-job PROMPT into the row strategy and actions that saving it would configure — WITHOUT saving anything (the configure → Preview → Test → Save flow). Free and read-only (no LLM call, no credits). Use it to check what a prompt implies before gen_create_recurring_job, or pass existing_actions to diff a proposal against what is already configured: the response says would_apply=false when your existing actions would stand (a save proposes, your configuration wins). Its `unresolved` list names prompt phrasing the parser could not bind — fix those before saving. Follow with gen_draft_test_recurring_job to rehearse the actual run.")
+async def gen_preview_recurring_job_prompt(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    prompt: Annotated[str, Field(description="The recurring-job prompt to parse (1-20000 chars), e.g. 'Generate 5 TikTok content ideas for my skincare brand'")],
+    existing_actions: Annotated[Optional[list], Field(default=None, description="The actions you already have configured (as returned by gen_get_recurring_job), so the response can report whether saving this prompt would actually change anything. Never stored, never merged.")] = None,
+) -> str:
+    body: dict = {"prompt": prompt}
+    if existing_actions is not None:
+        body["existing_actions"] = existing_actions
+    data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/preview-parse", body)
+    return json_result(data)
+
+@mcp.tool(name="gen_draft_test_recurring_job", description="Step 3 (Monitoring): Test an UNSAVED recurring job before committing to save it (the configure → Test → Save flow). Unlike gen_run_recurring_job_now (which rehearses an already-saved job by id), this takes the same body as gen_create_recurring_job with NO job id and runs it once as a draft. Accepts an optional job_id returned by a prior draft-test call to keep re-testing on the same draft row instead of leaving abandoned drafts. Returns 202 Accepted with a run_id you can poll via gen_get_run_status. Paid-media gated: requires paid-media access (a draft test spends real provider money, billed through the same path as a scheduled run).")
+async def gen_draft_test_recurring_job(
+    agent_id: Annotated[str, Field(description="The agent ID")],
+    job_type: Annotated[str, Field(description="Job type. Default content-ideas pipeline: 'generate_content_ideas'.")],
+    prompt: Annotated[str, Field(description="Natural-language prompt the agent would run each cycle")],
+    name: Annotated[Optional[str], Field(default=None, description="Display name. Defaults to the first 80 chars of prompt if omitted.")] = None,
+    schedule: Annotated[Optional[dict], Field(default=None, description="Schedule config (a draft test does not schedule anything; a placeholder is used if omitted), e.g. {'cadence': 'daily', 'time_of_day': '09:00', 'timezone': 'UTC'}")] = None,
+    delivery: Annotated[Optional[dict], Field(default=None, description="Delivery config, e.g. {'type': 'chat_only'} or {'type': 'email', 'email': 'user@example.com'}")] = None,
+    job_id: Annotated[Optional[str], Field(default=None, description="An existing draft's job_id (returned by a prior draft-test call) to UPDATE instead of inserting a second draft. Omit on the first test.")] = None,
+) -> str:
+    body: dict = {"job_type": job_type, "prompt": prompt}
+    if schedule is not None:
+        body["schedule"] = schedule
+    if delivery is not None:
+        body["delivery"] = delivery
+    if name is not None:
+        body["name"] = name
+    if job_id is not None:
+        body["job_id"] = job_id
+    data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/draft-test", body)
+    return json_result(data)
+
 @mcp.tool(name="gen_duplicate_recurring_job", description="Step 3 (Monitoring): Copy a recurring job to a different vidsheet. The copy inherits the source's prompt (rewritten to the new sheet), schedule, delivery settings, and actions. Returns 409 if the destination sheet already has an automation. Use when you want to run the same workflow on a different sheet without rebuilding it from scratch.")
 async def gen_duplicate_recurring_job(
     agent_id: Annotated[str, Field(description="The agent ID")],
@@ -1467,6 +1539,31 @@ async def gen_duplicate_recurring_job(
     if activate is not None:
         body["activate"] = activate
     data = await agent_api_call("POST", f"/agents/{agent_id}/recurring-jobs/{job_id}/duplicate", body)
+    return json_result(data)
+
+@mcp.tool(name="gen_list_recurring_job_runs", description="Step 3 (Monitoring): List the newest-first run history of a recurring job (the activity log for an automation). Each entry is one past execution with its status, timing, and outcome summary. Use this to inspect what a daily/weekly task actually produced, diagnose a run that failed or produced nothing, or page back through recent activity. For a SINGLE run's full step-by-step trace and final answer, use gen_get_recurring_job_run. Returns 404 if the job does not exist.")
+async def gen_list_recurring_job_runs(
+    agent_id: Annotated[str, Field(description="The agent ID that owns the recurring job")],
+    job_id: Annotated[str, Field(description="The recurring job id")],
+    limit: Annotated[Optional[int], Field(default=None, description="Max runs to return (1-100, default 20)")] = None,
+    offset: Annotated[Optional[int], Field(default=None, description="Number of runs to skip for pagination (default 0)")] = None,
+) -> str:
+    qs: list[str] = []
+    if limit is not None:
+        qs.append(f"limit={limit}")
+    if offset is not None:
+        qs.append(f"offset={offset}")
+    query = ("?" + "&".join(qs)) if qs else ""
+    data = await agent_api_call("GET", f"/agents/{agent_id}/recurring-jobs/{job_id}/runs{query}")
+    return json_result(data)
+
+@mcp.tool(name="gen_get_recurring_job_run", description="Step 3 (Monitoring): Get ONE run of a recurring job in full — its status, the step-by-step tool-call trace, and the final assistant answer. Use this to drill into a single run surfaced by gen_list_recurring_job_runs (e.g. a run marked failed or that returned unexpected output). Returns 404 if the job or run does not exist.")
+async def gen_get_recurring_job_run(
+    agent_id: Annotated[str, Field(description="The agent ID that owns the recurring job")],
+    job_id: Annotated[str, Field(description="The recurring job id")],
+    run_id: Annotated[str, Field(description="The run id (from gen_list_recurring_job_runs or the run_id returned by gen_run_recurring_job_now / gen_draft_test_recurring_job)")],
+) -> str:
+    data = await agent_api_call("GET", f"/agents/{agent_id}/recurring-jobs/{job_id}/runs/{run_id}")
     return json_result(data)
 
 # ─── Billing ──────────────────────────────────────────────────────────────────
@@ -1487,6 +1584,11 @@ async def gen_get_credit_usage(
     if page is not None:
         path += f"&page={page}"
     data = await api_call("GET", path)
+    return json_result(data)
+
+@mcp.tool(name="gen_list_subscriptions", description="Step 5 (Export & Publish): List the user's active credit subscriptions across every workspace they own — plan name, price, billing cycle, status (ACTIVE first), and seat count. Read-only, user-scoped (no agent_id). Use it to answer 'which workspaces have an active plan?' or to find the organization_id a billing question is about. Read-only and local-only: it does not create Stripe manage links or charge anything.")
+async def gen_list_subscriptions() -> str:
+    data = await api_call("GET", "/billing/subscriptions")
     return json_result(data)
 
 @mcp.tool(name="gen_list_credit_plans", description="Step 5 (Export & Publish): List available credit and subscription plans. Use before gen_buy_credits to show the user their options.")
@@ -1644,9 +1746,12 @@ async def gen_delete_scheduled_post(
 
 _IMAGE_VERSIONS = ["nano-banana", "nano-banana-pro", "nano-banana-2"]
 _VIDEO_MODELS = [
-    "seedance-1.0-lite", "seedance-1.0-pro", "seedance-1.5-pro", "seedance-2.0",
+    "seedance-1.0-lite", "seedance-1.0-pro", "seedance-1.5-pro", "seedance-2.0", "seedance-2.5",
     "veo_3", "veo_3_1", "kling_2_1", "kling_2_6", "sora_2", "pika", "grok",
 ]
+# seedance-2.5 only renders at 480p/720p (1080p is rejected by the provider);
+# coerce any higher/default resolution down to its default 720p.
+_SEEDANCE_25_RESOLUTIONS = ["480p", "720p"]
 _SONG_MODELS = ["suno-v5-beta", "suno-v4.5plus-beta"]
 
 @mcp.tool(name="gen_create_image", description="Step 4 (Edit & Generate): Generate an image from a text prompt. version selects the image model: 'nano-banana-pro' (highest quality, default), 'nano-banana' (fast), 'nano-banana-2' (balanced). aspect_ratio: 1:1 | 9:16 | 16:9. Pass reference_images (public URLs) for image-to-image identity-preserving generation (same face/product in a new scene). Paid — returns a generation_id to poll with gen_get_generation.")
@@ -1707,29 +1812,35 @@ async def gen_create_look(
     result = await api_call("POST", "/user_jobs", body)
     return json_result(result)
 
-@mcp.tool(name="gen_create_video", description="Step 4 (Edit & Generate): Generate one raw video clip from a text prompt. model: seedance-2.0 (default) | seedance-1.0-lite/1.0-pro/1.5-pro | veo_3 | veo_3_1 | kling_2_1 | kling_2_6 | sora_2 | pika | grok. resolution: 1080p (default) | 720p. Seedance 2.0 supports duration 4-15s. Paid — returns a generation_id to poll with gen_get_generation. For a complete multi-scene video from a brief, use gen_chat instead.")
+@mcp.tool(name="gen_create_video", description="Step 4 (Edit & Generate): Generate one raw video clip from a text prompt. model: seedance-2.0 (default) | seedance-1.0-lite/1.0-pro/1.5-pro | seedance-2.5 | veo_3 | veo_3_1 | kling_2_1 | kling_2_6 | sora_2 | pika | grok. resolution: 1080p (default) | 720p | 480p — NOTE seedance-2.5 only supports 480p/720p (1080p is coerced to 720p). Seedance 2.0/2.5 support duration 4-15s. Paid — returns a generation_id to poll with gen_get_generation. For a complete multi-scene video from a brief, use gen_chat instead.")
 async def gen_create_video(
     agent_id: Annotated[str, Field(description="The agent ID")],
     prompt: Annotated[str, Field(description="Video generation prompt")],
     model: Annotated[Optional[str], Field(default=None, description="Video model (default: seedance-2.0)")] = None,
     aspect_ratio: Annotated[Optional[str], Field(default=None, description="Aspect ratio: 16:9 (default) | 9:16 | 1:1")] = None,
-    resolution: Annotated[Optional[str], Field(default=None, description="Resolution: 1080p (default) | 720p")] = None,
-    duration: Annotated[Optional[int], Field(default=None, description="Duration in seconds (default 5; seedance-2.0 supports 4-15)")] = None,
+    resolution: Annotated[Optional[str], Field(default=None, description="Resolution: 1080p (default) | 720p | 480p. seedance-2.5 only supports 480p/720p; 1080p is coerced to 720p.")] = None,
+    duration: Annotated[Optional[int], Field(default=None, description="Duration in seconds (default 5; seedance-2.0/2.5 support 4-15)")] = None,
     native_audio: Annotated[Optional[bool], Field(default=None, description="Request model-native audio where supported (default false)")] = None,
 ) -> str:
     import json as _json
     m = model if model in _VIDEO_MODELS else "seedance-2.0"
-    if m == "seedance-2.0":
+    if m == "seedance-2.5":
+        job_type = "seedance_2_5_video_generation"
+    elif m == "seedance-2.0":
         job_type = "seedance_2_0_video_generation"
     elif m == "grok":
         job_type = "grok_video_generation"
     else:
         job_type = "seedance_video_generation"
+    # seedance-2.5 rejects 1080p; coerce to its default 720p.
+    eff_resolution = resolution or "1080p"
+    if m == "seedance-2.5" and eff_resolution not in _SEEDANCE_25_RESOLUTIONS:
+        eff_resolution = "720p"
     data_body: dict = {
         "model": m,
         "prompt": prompt,
         "aspect_ratio": aspect_ratio or "16:9",
-        "resolution": resolution or "1080p",
+        "resolution": eff_resolution,
         "duration": duration or 5,
         "native_audio": native_audio or False,
     }
